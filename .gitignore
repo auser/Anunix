@@ -34,20 +34,6 @@ htmlcov/
 *.sqlite
 chroma_data/
 
-# Kernel build artifacts
-*.o
-*.elf
-*.bin
-
-# Locally-fetched LLVM tools (from make toolchain)
-tools/llvm/
-
-# Locally-built QEMU (from make qemu-deps)
-tools/qemu/
-
-# GRUB modules and xorriso (from make iso-deps)
-tools/grub/
-
 # OS
 .DS_Store
 Thumbs.db

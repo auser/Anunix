@@ -21,24 +21,6 @@ This directory contains the formal Request for Comments (RFC) documents for the 
 | [0004](RFC-0004-memory-control-plane.md) | Memory Control Plane | Draft | Adam Pippert | 0001, 0002, 0003 |
 | [0005](RFC-0005-routing-and-scheduler.md) | Routing Plane and Unified Scheduler | Draft | Adam Pippert | 0001, 0002, 0003, 0004 |
 | [0006](RFC-0006-network-plane.md) | Network Plane and Federated Execution | Draft | Adam Pippert | 0001, 0002, 0003, 0004, 0005 |
-| [0007](RFC-0007-capability-objects.md) | Capability Objects and Runtime Installation | Draft | Adam Pippert | 0001, 0002, 0003, 0004, 0005, 0006 |
-| [0008](RFC-0008-credential-objects.md) | Credential Objects | Draft | Adam Pippert | 0001, 0002, 0003, 0007 |
-| [0009](RFC-0009-agent-memory.md) | Agent Memory System | Draft | Adam Pippert | 0001, 0002, 0003, 0004, 0005 |
-| [0010](RFC-0010-userland-utilities.md) | Userland Utility Layer — POSIX Port and Anunix Adaptation | Draft | Adam Pippert | 0001–0008 |
-| [0011](RFC-0011-agent-native-utilities.md) | Agent-Native Utilities and Hardware Discovery | Draft | Adam Pippert | 0001–0010 |
-| [0012](RFC-0012-interface-plane.md) | Interface Plane — Kernel-Level Abstraction for Interactive Environments | Draft | Adam Pippert | 0001–0008 |
-| [0013](RFC-0013-tensor-objects.md) | Tensor Objects and AnuTorch Translation Layer | Draft | Adam Pippert | 0002–0007 |
-| [0014](RFC-0014-hardware-platform.md) | Hardware Platform Targets and Driver Model | Draft | Adam Pippert | 0001–0004 |
-| [0015](RFC-0015-kernel-network-data-plane.md) | Kernel Network Data Plane — Zero-Copy, Multi-Queue, Flow Objects | Draft | Adam Pippert | 0004, 0006, 0007 |
-| [0016](RFC-0016-cell-execution-language.md) | Cell Execution Language (CEXL) — Lisp IR for Recursive Cell Orchestration | Draft | Adam Pippert | 0002, 0003, 0009 |
-| [0017](RFC-0017-vm-objects.md) | VM Objects — Dual-Nature Virtual Machine Primitives | Draft | Adam Pippert | 0001, 0002, 0003, 0005, 0007, 0008 |
-| [0018](RFC-0018-workflow-objects.md) | Workflow Objects — Graph-Structured Execution as First-Class Primitives | Draft | Adam Pippert | 0001, 0002, 0003, 0005, 0007, 0008, 0012, 0016 |
-| [0019](RFC-0019-theme-kickstart.md) | Visual Theme System and Kickstart Provisioning | Draft | Adam Pippert | 0001, 0002, 0012 |
-| [0020](RFC-0020-iterative-belief-action-loop.md) | Iterative Belief-Action Loop — EBM/JEPA/LLM Hybrid Execution Engine | Draft | Adam Pippert | 0002, 0003, 0004, 0005, 0007, 0009, 0013, 0016, 0018, JEPA |
-| [0021](RFC-0021-inference-runtime.md) | Inference Runtime (anxml) | Draft | Adam Pippert | 0002, 0003, 0005, 0007, 0013, 0014, 0022 |
-| [0022](RFC-0022-gpu-compute-plane.md) | GPU Compute Plane and AGX Driver | Draft | Adam Pippert | 0002, 0003, 0004, 0005, 0007, 0014, 0021 |
-| [0023](RFC-0023-amacs-editor.md) | amacs — Object-Native Editor with eLISP | Draft | Adam Pippert | 0002, 0003, 0010, 0012, 0018 |
-| [0024](RFC-0024-audio-engine-and-media-apps.md) | Audio Engine and Media Player Apps | Draft | Adam Pippert | 0002, 0003, 0010, 0012, 0018 |
 
 ## Dependency Graph
 
@@ -49,13 +31,4 @@ RFC-0001 (Architecture Thesis)
             └── RFC-0004 (Memory Control Plane)
                  └── RFC-0005 (Routing Plane and Unified Scheduler)
                       └── RFC-0006 (Network Plane and Federated Execution)
-                           └── RFC-0007 (Capability Objects and Runtime Installation)
-                                └── RFC-0008 (Credential Objects)
-                                     └── RFC-0009 (Agent Memory System)
-                                          └── RFC-0010 (Userland Utility Layer)
-                                               └── RFC-0011 (Agent-Native Utilities and Hardware Discovery)
-RFC-0008 (Credential Objects)
-  └── RFC-0012 (Interface Plane) [also depends on RFC-0002 through RFC-0007]
-RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0007, RFC-0008
-  └── RFC-0017 (VM Objects)
 ```

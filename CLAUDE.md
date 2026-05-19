@@ -1,185 +1,107 @@
-# Anunix Development Guide
+# CLAUDE.md — Anunix Development Guide
 
-## Project Overview
+## Goals
 
-Anunix is an AI-native operating system that redefines UNIX primitives around state, transformation, memory, routing, and validation. It replaces files with State Objects, processes with Execution Cells, and adds first-class memory, routing, and network planes.
+Anunix is an AI-native operating system framework that redefines UNIX primitives for distributed, probabilistic, memory-aware computation. The immediate goal is a **Phase 1 userland prototype** in Python that demonstrates:
 
-The design is specified in RFCs 0001-0007 under `docs/rfcs/` and `rfcs/`.
+1. State Objects as the canonical data abstraction (replacing passive files)
+2. Execution Cells as the work abstraction (replacing flat processes)
+3. A Memory Control Plane with tiered, trust-aware, retrievable memory
+4. A Routing Engine that selects engines by capability (not brand)
+5. A Unified Scheduler binding routes to heterogeneous resources
+6. A Network Plane enabling federated execution and memory
 
-## Development Principles
+Success criteria: the meeting recording workflow runs end-to-end — audio → transcript → summary → action items → memory integration → retrieval.
 
-### Minimalism and Clarity
+## Environment
 
-This OS follows the UNIX tradition of small, sharp tools and clear code. Every line should earn its place. Prefer simple, obvious implementations over clever ones. If a comment is needed to explain *what* code does, the code should be rewritten. Comments explain *why*.
+- **Language**: Python 3.11+
+- **Build**: `hatchling` via `pyproject.toml`
+- **Install**: `pip install -e ".[all]"` for full dev setup
+- **Test**: `make test` (pytest with asyncio)
+- **Lint**: `make lint` (ruff)
+- **Type check**: `make typecheck` (mypy strict)
+- **Config**: TOML (`config/default.toml`), loaded via Pydantic models in `src/anunix/core/config.py`
 
-### Language Policy
+### Key Dependencies
 
-- **Kernel code**: C (C11) and ARM64/x86_64 assembly. No exceptions.
-- **Userland tools**: C preferred. Assembly where performance demands it.
-- **Build tooling**: Make, shell scripts, minimal Python only for code generation if unavoidable.
-- **No C++, no Rust, no Go** in the kernel or core userland. The value proposition is a system built with the same discipline as classical UNIX — readable, auditable, portable C.
+| Package | Purpose |
+|---------|---------|
+| pydantic v2 | All data models, validation, serialization |
+| networkx | Graph memory backend |
+| chromadb | Embedding/vector storage |
+| click | CLI framework |
+| litellm | Unified model API (OpenAI, Anthropic, Ollama) |
+| pyzmq + msgpack | Inter-service IPC |
+| structlog | Structured logging |
 
-### Code Style (C)
-
-- K&R brace style, tabs for indentation (8-wide, like Linux kernel).
-- Function names: `subsystem_verb_noun()` — e.g., `state_object_create()`, `cell_runtime_admit()`.
-- Struct names: `struct anx_state_object`, `struct anx_cell`. Prefix `anx_` for all public symbols.
-- Macros: `ANX_UPPERCASE` — e.g., `ANX_MAX_TIERS`, `ANX_OK`.
-- Header guards: `#ifndef ANX_SUBSYSTEM_HEADER_H`.
-- No typedefs hiding pointers. `struct anx_foo *` is always spelled out.
-- Static functions for file-local scope. Minimal use of global state.
-- Every public function has a one-line doc comment above it in the header.
-
-### Code Style (Assembly)
-
-- AT&T syntax for x86_64, standard ARM64 syntax for aarch64.
-- One file per logical unit (e.g., `context_switch.S`, `syscall_entry.S`).
-- `.S` extension (preprocessed assembly), not `.s`.
-- Liberal comments — assembly *always* needs explanation.
-
-### Error Handling
-
-- Functions return `int` status codes. 0 = success, negative = error.
-- Error codes defined in `include/anx/errno.h`. Subsystem-specific codes in subsystem headers.
-- No `errno` global. Errors flow through return values.
-- No exceptions, no longjmp for error handling. Explicit cleanup with `goto cleanup` pattern.
-
-### Memory Management
-
-- No hidden allocations. Every allocation has an explicit owner and a documented lifetime.
-- Prefer stack allocation and arena/pool allocators over malloc/free pairs.
-- All allocations go through `anx_alloc()` / `anx_free()` which track and can be audited.
-
-## Target Platforms
-
-### Primary Targets
-
-| Platform | Architecture | SoC / CPU | Notes |
-|----------|-------------|-----------|-------|
-| Apple Silicon Macs | ARM64 (AArch64) | M1, M2 | Like Asahi Linux — requires device tree, custom boot |
-| Framework Laptop 16 (2nd gen) | x86_64 | AMD/Intel | Standard UEFI boot |
-| Framework Desktop | x86_64 | AMD/Intel | Standard UEFI boot |
-
-### Architecture Split
-
-Hardware-specific code lives under `kernel/arch/<arch>/`. Everything else is architecture-independent. The boundary is enforced: arch code implements a defined interface, core code never `#ifdef`s on architecture.
+### Project Layout
 
 ```
-kernel/arch/arm64/   — Apple Silicon boot, MMU, interrupts, device tree
-kernel/arch/x86_64/  — UEFI boot, page tables, APIC, ACPI
-kernel/core/         — Architecture-independent kernel (state, cells, memory, routing)
+src/anunix/core/       → Foundation (types, errors, config, events)
+src/anunix/state/      → State Object model and storage backends
+src/anunix/memory/     → Memory Control Plane (tiers, taxonomy, graph, embeddings)
+src/anunix/execution/  → Execution Cell Runtime (cells, contracts, streams, trace)
+src/anunix/routing/    → Routing Engine (registry, classifier, scorer, strategies)
+src/anunix/scheduler/  → Unified Scheduler (queue, resources, bindings)
+src/anunix/validation/ → Validation layer (rules, schema checks, trust scoring)
+src/anunix/network/    → Network Plane (peers, transport, replication, reconciliation)
+src/anunix/posix/      → POSIX compatibility (FUSE, process adapter)
+cli/                   → Click CLI entry point and command groups
+config/                → Default and example TOML configuration
+tests/unit/            → Per-module unit tests
+tests/integration/     → Cross-module integration tests
+docs/rfcs/             → Formal architecture specifications (RFC-0001 through RFC-0006)
 ```
 
-## Build System
+### Branch
 
-- GNU Make. No CMake, no autotools, no meson.
-- Cross-compilation: build on M1 Mac Studio, target ARM64 and x86_64 bare metal.
-- `make kernel ARCH=arm64` or `make kernel ARCH=x86_64` selects target.
-- Toolchain: System clang (Xcode CLT) for compilation + locally-fetched LLVM tools for linking (`make toolchain`). No Homebrew.
-- Output: raw kernel binary (`build/<arch>/anunix.bin`), ELF (`build/<arch>/anunix.elf`).
+All development happens on `claude/ai-native-os-rfc-8emkB`. Push with `git push -u origin claude/ai-native-os-rfc-8emkB`.
 
-### Prerequisites
+## Preferences
 
-```
-make toolchain             # One-time: fetches ld.lld + llvm-objcopy into tools/llvm/bin/
-```
+### Architecture
 
-No Homebrew. System clang (Xcode Command Line Tools) handles compilation. The `make toolchain` target downloads only the LLVM binaries Apple omits (ld.lld, llvm-objcopy) from official LLVM releases into `tools/llvm/bin/`. QEMU is installed separately where needed.
+- Every data model uses **Pydantic BaseModel** — no plain dicts for structured data
+- All ID types are opaque strings with a prefix (`so_`, `cell_`, `eng_`, `plan_`, `trace_`, `node_`)
+- The **State Object** is the universal data carrier — all persisted or shared data flows through it
+- Modules communicate through well-defined interfaces, not direct imports of internals
+- Async-first design using `asyncio` for any I/O-bound or concurrent operations
+- Configuration is always loaded from TOML via the config system, never hardcoded
 
-### Build Targets
+### Coding Style
 
-```
-make kernel                # Build for default ARCH (detected from host)
-make kernel ARCH=arm64     # Build for Apple Silicon
-make kernel ARCH=x86_64    # Build for Framework devices
-make clean                 # Remove build artifacts
-make test                  # Run kernel unit tests (host-native)
-make qemu                  # Boot in QEMU (headless, serial console)
-make toolchain             # Fetch LLVM linker tools
-make toolchain-check       # Verify dependencies installed
-```
+- Type annotations everywhere — mypy strict mode must pass
+- Ruff for formatting and linting (line length 100)
+- Use enums for finite value sets (status codes, strategy names, etc.)
+- Prefer composition over inheritance
+- Every public function in a module should be importable from the module's `__init__.py`
+- Tests are mandatory for any new functionality — one test file per source module minimum
 
-## Testing Strategy
+### RFCs Are the Spec
 
-**VM-first**: All validation happens in VMs before touching real hardware.
+The `docs/rfcs/` directory is the authoritative specification. When implementing a module:
+1. Read the corresponding RFC first
+2. Use the schemas and field names from the RFC
+3. Follow the lifecycle and state machine definitions exactly
+4. Implement the API surface described in the RFC
 
-### Development Machine
+### Commit Style
 
-- **Hyde** — x86_64 Linux, primary dev box. All builds and tests run here. Repo lives at `~/Development/Anunix/Anunix`.
+- `feat:` for new functionality
+- `docs:` for documentation changes
+- `fix:` for bug fixes
+- `refactor:` for restructuring without behavior change
+- Commit messages explain the "why" in 1-2 sentences
 
-### Headless Testing with QEMU
+## Anti-patterns
 
-`make qemu` boots the kernel in QEMU on Hyde with serial console output. This is the primary feedback loop during development. Hyde runs QEMU natively for x86_64 and via cross-compile + emulation for ARM64.
-
-### VM Testing with UTM (Mac, secondary)
-
-Mac machines can run UTM for near-native ARM64 validation before Framework hardware, but Hyde is the canonical build machine.
-
-| Target | Backend | Use |
-|--------|---------|-----|
-| x86_64 | QEMU on Hyde (native) | Primary development loop |
-| ARM64 | QEMU on Hyde (emulated) | Cross-compile validation |
-
-### Linux Validation (Jekyll, retired)
-
-Jekyll was previously used as a QEMU/libvirt test target. That role is now handled directly on Hyde.
-
-Pipeline: develop on Hyde → headless QEMU test on Hyde → real hardware.
-
-### Real Hardware (later)
-
-Real hardware testing comes after both UTM and QEMU/libvirt validation pass. Targets: Apple Silicon Macs (M1/M2), Framework Laptop 16 (2nd gen), Framework Desktop.
-
-## Directory Structure
-
-```
-kernel/
-  arch/
-    arm64/            # Apple Silicon: boot, MMU, interrupts, timers
-    x86_64/           # Framework: UEFI boot, paging, APIC, ACPI
-  core/               # Architecture-independent kernel
-    state/            # State Object Layer (RFC-0002)
-    exec/             # Execution Cell Runtime (RFC-0003)
-    mem/              # Memory Control Plane (RFC-0004)
-    route/            # Routing Plane (RFC-0005)
-    sched/            # Unified Scheduler (RFC-0005)
-    net/              # Network Plane (RFC-0006)
-    cap/              # Capability Objects (RFC-0007)
-    posix/            # POSIX compatibility shim
-  include/
-    anx/              # Public kernel headers
-    arch/             # Architecture-specific headers
-  lib/                # Kernel support library (string, printf, etc.)
-  drivers/            # Device drivers
-lib/                  # Userland library (libanx)
-tools/                # Build scripts, image creation
-tests/                # Kernel unit tests (run on host)
-docs/                 # RFCs and design documents
-config/               # Build and runtime configuration
-```
-
-## Testing
-
-- Unit tests run on the host using a test harness that stubs hardware interfaces.
-- Integration tests run in QEMU.
-- Every subsystem has tests. No code merges without tests.
-- Test files: `tests/test_<subsystem>_<thing>.c`
-
-## RFC to Code Mapping
-
-| RFC | Subsystem | Directory |
-|-----|-----------|-----------|
-| RFC-0001 | Architecture (principles only) | — |
-| RFC-0002 | State Object Model | `kernel/core/state/` |
-| RFC-0003 | Execution Cell Runtime | `kernel/core/exec/` |
-| RFC-0004 | Memory Control Plane | `kernel/core/mem/` |
-| RFC-0005 | Routing + Scheduler | `kernel/core/route/`, `kernel/core/sched/` |
-| RFC-0006 | Network Plane | `kernel/core/net/` |
-| RFC-0007 | Capability Objects | `kernel/core/cap/` |
-
-## Workflow
-
-- One component at a time. Implement, test, integrate.
-- Start with the State Object Layer (RFC-0002) — it's the foundation everything else builds on.
-- Keep the Python prototype as a reference/test oracle, but the real OS is C.
-- Commits are atomic and descriptive. One logical change per commit.
+- **No god objects** — each module owns its domain; don't put routing logic in the state module
+- **No silent failures** — use the exception hierarchy in `core/errors.py`; raise explicitly
+- **No untyped dicts** — if data has structure, model it with Pydantic
+- **No implicit network calls** — all remote operations must go through the Network Plane with policy checks
+- **No validation bypass** — outputs from model/probabilistic sources must pass through the validation layer before memory promotion
+- **No hardcoded model names** — use the capability registry and routing engine; engines are selected by capability
+- **No monolithic implementations** — keep functions small and composable (UNIX philosophy)
+- **No premature optimization** — Phase 1 is about getting the abstractions right, not performance
+- **No state leakage** — Execution Cells should not share mutable state; all communication goes through State Objects or Semantic Streams
