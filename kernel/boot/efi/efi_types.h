@@ -111,39 +111,14 @@ typedef EFI_STATUS (EFIAPI *EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE)(
 	EFI_GRAPHICS_OUTPUT_MODE_INFORMATION **Info
 );
 
-typedef EFI_STATUS (EFIAPI *EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE)(
-	struct _EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
-	UINT32 ModeNumber
-);
-
 typedef struct _EFI_GRAPHICS_OUTPUT_PROTOCOL {
 	EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE	QueryMode;
-	EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE	SetMode;
+	VOID					*SetMode;
 	VOID					*Blt;
 	EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE	*Mode;
 } EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 /* Boot Services (partial) */
-typedef enum {
-	AllHandles,
-	ByRegisterNotify,
-	ByProtocol
-} EFI_LOCATE_SEARCH_TYPE;
-
-typedef EFI_STATUS (EFIAPI *EFI_HANDLE_PROTOCOL)(
-	EFI_HANDLE Handle,
-	EFI_GUID *Protocol,
-	VOID **Interface
-);
-
-typedef EFI_STATUS (EFIAPI *EFI_LOCATE_HANDLE_BUFFER)(
-	EFI_LOCATE_SEARCH_TYPE SearchType,
-	EFI_GUID *Protocol,
-	VOID *SearchKey,
-	UINTN *NoHandles,
-	EFI_HANDLE **Buffer
-);
-
 typedef EFI_STATUS (EFIAPI *EFI_LOCATE_PROTOCOL)(
 	EFI_GUID *Protocol,
 	VOID *Registration,
@@ -197,12 +172,12 @@ typedef struct _EFI_BOOT_SERVICES {
 	VOID	*CheckEvent;
 
 	/* Protocol handlers (6 entries) */
-	VOID			*InstallProtocolInterface;
-	VOID			*ReinstallProtocolInterface;
-	VOID			*UninstallProtocolInterface;
-	EFI_HANDLE_PROTOCOL	HandleProtocol;
-	VOID			*Reserved;
-	VOID			*RegisterProtocolNotify;
+	VOID	*InstallProtocolInterface;
+	VOID	*ReinstallProtocolInterface;
+	VOID	*UninstallProtocolInterface;
+	VOID	*HandleProtocol;
+	VOID	*Reserved;
+	VOID	*RegisterProtocolNotify;
 
 	/* Search (3 entries) */
 	VOID	*LocateHandle;
@@ -233,8 +208,8 @@ typedef struct _EFI_BOOT_SERVICES {
 	VOID	*OpenProtocolInformation;
 
 	/* Library (3 entries) */
-	VOID			*ProtocolsPerHandle;
-	EFI_LOCATE_HANDLE_BUFFER LocateHandleBuffer;
+	VOID	*ProtocolsPerHandle;
+	VOID	*LocateHandleBuffer;
 	EFI_LOCATE_PROTOCOL	LocateProtocol;
 } EFI_BOOT_SERVICES;
 

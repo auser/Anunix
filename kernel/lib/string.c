@@ -1,58 +1,30 @@
 /*
  * string.c — Kernel string and memory functions.
  *
- * Word-wide (64-bit) bulk paths for memcpy/memset/memmove.
- * Framebuffer scrolls copy ~8 MB per newline; byte-at-a-time is
- * the scroll-lag bottleneck — 64-bit words give an 8× improvement
- * with no SIMD required (all general registers on x86_64 / arm64).
+ * Simple byte-at-a-time implementations. Correctness first;
+ * optimize with word-wide or SIMD operations later if profiling
+ * shows these are hot paths.
  */
 
 #include <anx/string.h>
 
 void *anx_memcpy(void *dst, const void *src, size_t n)
 {
-	uint8_t       *d8 = (uint8_t *)dst;
-	const uint8_t *s8 = (const uint8_t *)src;
-
-	if ((((size_t)dst | (size_t)src) & 7) == 0) {
-		uint64_t       *d64 = (uint64_t *)dst;
-		const uint64_t *s64 = (const uint64_t *)src;
-		size_t          words = n / 8;
-
-		while (words--)
-			*d64++ = *s64++;
-
-		d8 = (uint8_t *)d64;
-		s8 = (const uint8_t *)s64;
-		n  = n % 8;
-	}
+	uint8_t *d = dst;
+	const uint8_t *s = src;
 
 	while (n--)
-		*d8++ = *s8++;
-
+		*d++ = *s++;
 	return dst;
 }
 
 void *anx_memset(void *dst, int val, size_t n)
 {
-	uint8_t  v8  = (uint8_t)val;
-	uint8_t *d8  = (uint8_t *)dst;
-
-	if (((size_t)dst & 7) == 0) {
-		uint64_t  v64 = (uint64_t)v8 * 0x0101010101010101ULL;
-		uint64_t *d64 = (uint64_t *)dst;
-		size_t    words = n / 8;
-
-		while (words--)
-			*d64++ = v64;
-
-		d8 = (uint8_t *)d64;
-		n  = n % 8;
-	}
+	uint8_t *d = dst;
+	uint8_t v = (uint8_t)val;
 
 	while (n--)
-		*d8++ = v8;
-
+		*d++ = v;
 	return dst;
 }
 
@@ -72,28 +44,13 @@ int anx_memcmp(const void *a, const void *b, size_t n)
 
 void *anx_memmove(void *dst, const void *src, size_t n)
 {
-	uint8_t       *d = dst;
+	uint8_t *d = dst;
 	const uint8_t *s = src;
 
-	if (d == s || n == 0)
-		return dst;
-
 	if (d < s) {
-		/* Forward copy: word-wide where possible */
-		uint64_t       *d64 = dst;
-		const uint64_t *s64 = src;
-		size_t          words = n / 8;
-		size_t          tail  = n % 8;
-
-		while (words--)
-			*d64++ = *s64++;
-
-		d = (uint8_t *)d64;
-		s = (const uint8_t *)s64;
-		while (tail--)
+		while (n--)
 			*d++ = *s++;
-	} else {
-		/* Backward copy — must be byte-at-a-time to stay correct */
+	} else if (d > s) {
 		d += n;
 		s += n;
 		while (n--)
@@ -154,32 +111,6 @@ int anx_strncmp(const char *a, const char *b, size_t n)
 	return (unsigned char)*a - (unsigned char)*b;
 }
 
-char *anx_strncat(char *dst, const char *src, size_t n)
-{
-	char *p = dst;
-
-	while (*p)
-		p++;
-	while (n-- && *src)
-		*p++ = *src++;
-	*p = '\0';
-	return dst;
-}
-
-const char *anx_strstr(const char *haystack, const char *needle)
-{
-	size_t nlen = anx_strlen(needle);
-
-	if (nlen == 0)
-		return haystack;
-	while (*haystack) {
-		if (anx_memcmp(haystack, needle, nlen) == 0)
-			return haystack;
-		haystack++;
-	}
-	return NULL;
-}
-
 size_t anx_strlcpy(char *dst, const char *src, size_t dstsize)
 {
 	size_t srclen = anx_strlen(src);
@@ -190,122 +121,4 @@ size_t anx_strlcpy(char *dst, const char *src, size_t dstsize)
 		dst[copylen] = '\0';
 	}
 	return srclen;
-}
-
-uint64_t anx_strtoull(const char *s, char **endp, int base)
-{
-	uint64_t val = 0;
-	const char *p = s;
-
-	while (*p == ' ' || *p == '\t')
-		p++;
-	if (base == 0 || base == 16) {
-		if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
-			base = 16;
-			p += 2;
-		} else if (base == 0) {
-			base = (p[0] == '0') ? 8 : 10;
-		}
-	}
-	for (; *p; p++) {
-		int d;
-		if (*p >= '0' && *p <= '9')       d = *p - '0';
-		else if (*p >= 'a' && *p <= 'f')   d = *p - 'a' + 10;
-		else if (*p >= 'A' && *p <= 'F')   d = *p - 'A' + 10;
-		else break;
-		if (d >= base) break;
-		val = val * (uint64_t)base + (uint64_t)d;
-	}
-	if (endp)
-		*endp = (char *)p;
-	return val;
-}
-
-uint32_t anx_strtoul(const char *s, char **endp, int base)
-{
-	return (uint32_t)anx_strtoull(s, endp, base);
-}
-
-/* Write decimal representation of val into buf[size]. Returns chars written. */
-static uint32_t fmt_uint64(char *buf, uint32_t size, uint64_t val)
-{
-	char tmp[20];
-	uint32_t n = 0, i;
-
-	if (size == 0)
-		return 0;
-	if (val == 0) {
-		tmp[n++] = '0';
-	} else {
-		while (val > 0 && n < sizeof(tmp)) {
-			tmp[n++] = (char)('0' + val % 10);
-			val /= 10;
-		}
-	}
-	for (i = 0; i < n && i < size - 1; i++)
-		buf[i] = tmp[n - 1 - i];
-	buf[i] = '\0';
-	return i;
-}
-
-int anx_snprintf(char *buf, uint32_t size, const char *fmt, ...)
-{
-	__builtin_va_list ap;
-	uint32_t pos = 0;
-	const char *p = fmt;
-
-	if (!buf || size == 0)
-		return 0;
-
-	__builtin_va_start(ap, fmt);
-	while (*p && pos + 1 < size) {
-		if (*p != '%') {
-			buf[pos++] = *p++;
-			continue;
-		}
-		p++;
-		if (*p == 'u') {
-			uint32_t v = __builtin_va_arg(ap, unsigned int);
-			pos += fmt_uint64(buf + pos, size - pos, (uint64_t)v);
-			p++;
-		} else if (*p == 'd') {
-			int v = __builtin_va_arg(ap, int);
-			if (v < 0 && pos + 1 < size) {
-				buf[pos++] = '-';
-				pos += fmt_uint64(buf + pos, size - pos,
-						  (uint64_t)(-(int64_t)v));
-			} else {
-				pos += fmt_uint64(buf + pos, size - pos,
-						  (uint64_t)v);
-			}
-			p++;
-		} else if (p[0] == 'l' && p[1] == 'l' && p[2] == 'u') {
-			uint64_t v = __builtin_va_arg(ap, unsigned long long);
-			pos += fmt_uint64(buf + pos, size - pos, v);
-			p += 3;
-		} else if (p[0] == 'l' && p[1] == 'l' && p[2] == 'd') {
-			long long v = __builtin_va_arg(ap, long long);
-			if (v < 0 && pos + 1 < size) {
-				buf[pos++] = '-';
-				pos += fmt_uint64(buf + pos, size - pos,
-						  (uint64_t)(-v));
-			} else {
-				pos += fmt_uint64(buf + pos, size - pos,
-						  (uint64_t)v);
-			}
-			p += 3;
-		} else if (*p == 's') {
-			const char *s = __builtin_va_arg(ap, const char *);
-			while (*s && pos + 1 < size)
-				buf[pos++] = *s++;
-			p++;
-		} else {
-			buf[pos++] = '%';
-			if (*p && pos + 1 < size)
-				buf[pos++] = *p++;
-		}
-	}
-	__builtin_va_end(ap);
-	buf[pos] = '\0';
-	return (int)pos;
 }

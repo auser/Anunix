@@ -130,32 +130,26 @@ static void pic_init(void)
 	anx_outb(pic2_mask, PIC2_DATA);
 }
 
-/* --- Dynamic IRQ handler table (shared IRQ support) --- */
+/* --- Dynamic IRQ handler table --- */
 
-#define PIC_IRQ_COUNT		16
-#define PIC_IRQ_BASE		32	/* vector offset for IRQ 0 */
-#define IRQ_HANDLERS_PER_LINE	4	/* max shared handlers per IRQ */
+#define PIC_IRQ_COUNT	16
+#define PIC_IRQ_BASE	32	/* vector offset for IRQ 0 */
 
 static struct {
 	anx_irq_handler_t handler;
 	void *arg;
-} irq_handlers[PIC_IRQ_COUNT][IRQ_HANDLERS_PER_LINE];
+} irq_handlers[PIC_IRQ_COUNT];
 
 int anx_irq_register(uint8_t irq, anx_irq_handler_t handler, void *arg)
 {
-	uint32_t slot;
-
-	if (irq >= PIC_IRQ_COUNT || handler == NULL)
+	if (irq >= PIC_IRQ_COUNT)
 		return ANX_EINVAL;
+	if (irq_handlers[irq].handler)
+		return ANX_EEXIST;
 
-	for (slot = 0; slot < IRQ_HANDLERS_PER_LINE; slot++) {
-		if (!irq_handlers[irq][slot].handler) {
-			irq_handlers[irq][slot].handler = handler;
-			irq_handlers[irq][slot].arg     = arg;
-			return ANX_OK;
-		}
-	}
-	return ANX_ENOMEM;	/* all slots full */
+	irq_handlers[irq].handler = handler;
+	irq_handlers[irq].arg = arg;
+	return ANX_OK;
 }
 
 void anx_irq_unmask(uint8_t irq)
@@ -191,7 +185,6 @@ void anx_irq_mask(uint8_t irq)
 #define TARGET_HZ	100
 
 static volatile uint64_t pit_ticks;
-static void (*pit_callback)(void);
 
 static void pit_init(void)
 {
@@ -233,17 +226,10 @@ void anx_exception_dispatch(uint64_t vector, uint64_t error_code,
 		uint8_t irq = (uint8_t)(vector - PIC_IRQ_BASE);
 
 		if (irq == 0) {
+			/* Timer IRQ — always handled internally */
 			pit_ticks++;
-			if (pit_callback)
-				pit_callback();
-		} else {
-			uint32_t slot;
-
-			for (slot = 0; slot < IRQ_HANDLERS_PER_LINE; slot++) {
-				if (irq_handlers[irq][slot].handler)
-					irq_handlers[irq][slot].handler(
-						irq, irq_handlers[irq][slot].arg);
-			}
+		} else if (irq_handlers[irq].handler) {
+			irq_handlers[irq].handler(irq, irq_handlers[irq].arg);
 		}
 
 		/* EOI */
@@ -269,14 +255,6 @@ void anx_exception_dispatch(uint64_t vector, uint64_t error_code,
 		(uint32_t)vector,
 		vector < 22 ? exception_names[vector] : "Unknown");
 	kprintf("  Error code: 0x%x\n", (uint32_t)error_code);
-	/* Dump RIP for debugging.  frame points to saved GP regs (15 qwords),
-	 * then vector (8), error code (8), then CPU-pushed RIP/CS/RFLAGS/... */
-	{
-		uint64_t *stack = (uint64_t *)frame;
-		uint64_t rip = stack[17];
-
-		kprintf("  RIP:  0x%x\n", (uint32_t)rip);
-	}
 	kprintf("Halting.\n");
 	arch_halt();
 }
@@ -320,9 +298,4 @@ void arch_exception_init(void)
 uint64_t arch_timer_ticks(void)
 {
 	return pit_ticks;
-}
-
-void arch_set_timer_callback(void (*fn)(void))
-{
-	pit_callback = fn;
 }

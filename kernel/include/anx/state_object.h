@@ -29,29 +29,7 @@ enum anx_object_type {
 	ANX_OBJ_CREDENTIAL,		/* RFC-0008 */
 	ANX_OBJ_SURFACE,		/* RFC-0012: Interface Plane surface */
 	ANX_OBJ_EVENT,			/* RFC-0012: Interface Plane event */
-	ANX_OBJ_TENSOR,			/* RFC-0013: multi-dimensional array */
-	ANX_OBJ_VM,			/* RFC-0017: virtual machine object */
-	ANX_OBJ_WORKFLOW,		/* RFC-0018: workflow object */
-
-	/* JEPA latent-state subsystem */
-	ANX_OBJ_JEPA_OBS,		/* system observation snapshot */
-	ANX_OBJ_JEPA_LATENT,		/* encoded latent state vector */
-	ANX_OBJ_JEPA_TRACE,		/* training trace (obs_t, action, obs_t+1, loss) */
-	ANX_OBJ_JEPA_WORLD_PROFILE,	/* world profile config + schema */
-
-	/* RFC-0020 IBAL loop primitives */
-	ANX_OBJ_LOOP_SESSION,		/* iterative reasoning session */
-	ANX_OBJ_BELIEF_STATE,		/* current working belief at iteration N */
-	ANX_OBJ_WORLD_PROPOSAL,	/* candidate world hypothesis */
-	ANX_OBJ_SCORE,			/* energy score from one EBM cell */
-	ANX_OBJ_PLAN,			/* committed or candidate action plan */
-	ANX_OBJ_COUNTEREXAMPLE,	/* rejected hypothesis (negative knowledge) */
-	ANX_OBJ_MEMORY_CONSOLIDATION,	/* RFC-0020 Phase 5: cross-session memory */
-
-	/* RFC-0024 media types */
-	ANX_OBJ_AUDIO_CLIP,		/* PCM audio + format header */
-	ANX_OBJ_VIDEO_CLIP,		/* RGBA frames + format header */
-
+	ANX_OBJ_TENSOR,			/* RFC-0013: Tensor Object */
 	ANX_OBJ_TYPE_COUNT,
 };
 

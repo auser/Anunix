@@ -29,11 +29,8 @@
 #include <anx/string.h>
 #include <anx/credential.h>
 #include <anx/auth.h>
-#include <anx/blk.h>
-#include <anx/objstore_disk.h>
-#include <anx/driver_table.h>
-#include <anx/mt7925.h>
-#include <anx/xdna.h>
+#include <anx/virtio_net.h>
+#include <anx/virtio_blk.h>
 #include <anx/net.h>
 #include <anx/splash.h>
 #include <anx/perf.h>
@@ -41,33 +38,71 @@
 #include <anx/interface_plane.h>
 #include <anx/usb_mouse.h>
 #include <anx/shell.h>
-#include <anx/vm.h>
-#include <anx/wm.h>
-#include <anx/workflow.h>
-#include <anx/workflow_library.h>
-#include <anx/theme.h>
-#include <anx/kickstart.h>
-#include <anx/httpd.h>
-#include <anx/sshd.h>
-#include <anx/jepa.h>
-#include <anx/loop.h>
-#include <anx/browser.h>
-#include <anx/ebm.h>
-#include <anx/memory.h>
-#include <anx/installer.h>
-#include <anx/model_client.h>
-#include <anx/tools.h>
-#include <anx/bootlog.h>
-#include <anx/audio.h>
-#include <anx/video.h>
+
+#define ANX_VERSION "2026.4.17"
+
+/*
+ * Emergency framebuffer write — draw a colored bar directly to
+ * the multiboot2 framebuffer before any subsystem is initialized.
+ * Used to prove the kernel is running on hardware with no serial.
+ */
+extern uint32_t _mb_magic;
+extern uint64_t _mb_info;
+
+static void early_fb_debug(uint32_t color, uint32_t row)
+{
+	uint8_t *ptr, *end;
+	uint32_t total_size;
+	uint64_t fb_addr = 0;
+	uint32_t fb_pitch = 0;
+	uint32_t fb_width = 0;
+	uint32_t x, y;
+	uint32_t *pixel;
+
+	if (_mb_magic != 0x36d76289 || _mb_info == 0)
+		return;
+
+	/* Parse multiboot2 tags for framebuffer */
+	ptr = (uint8_t *)(uintptr_t)_mb_info;
+	total_size = *(uint32_t *)ptr;
+	end = ptr + total_size;
+	ptr += 8;
+
+	while (ptr + 8 <= end) {
+		uint32_t tag_type = *(uint32_t *)ptr;
+		uint32_t tag_size = *(uint32_t *)(ptr + 4);
+
+		if (tag_type == 0)
+			break;
+		if (tag_type == 8 && tag_size >= 32) {
+			fb_addr  = *(uint64_t *)(ptr + 8);
+			fb_pitch = *(uint32_t *)(ptr + 16);
+			fb_width = *(uint32_t *)(ptr + 20);
+			break;
+		}
+		ptr += (tag_size + 7) & ~7u;
+	}
+
+	if (fb_addr == 0 || fb_width == 0)
+		return;
+
+	/* Draw a colored bar at the specified row */
+	for (y = row * 20; y < row * 20 + 20; y++) {
+		pixel = (uint32_t *)(uintptr_t)(fb_addr + y * fb_pitch);
+		for (x = 0; x < fb_width && x < 400; x++)
+			pixel[x] = color;
+	}
+}
 
 void kernel_main(void)
 {
-	/* Boot session ring buffer — must be first, before any kprintf output */
-	anx_bootlog_early_init();
+	/* Immediate visual debug — proves kernel is running on bare metal */
+	early_fb_debug(0x00FF0000, 0);	/* red bar: kernel_main entered */
 
 	/* Early hardware init (serial/UART so kprintf works) */
 	arch_early_init();
+
+	early_fb_debug(0x0000FF00, 1);	/* green bar: serial init done */
 
 	/* Detect and initialize framebuffer if available */
 	{
@@ -75,12 +110,15 @@ void kernel_main(void)
 
 		arch_fb_detect(&fb_info);
 
+		early_fb_debug(0x000000FF, 2);	/* blue bar: fb detect done */
+
 		if (fb_info.available && anx_fb_init(&fb_info) == ANX_OK) {
 			anx_fbcon_init();
-			kprintf("framebuffer console: %ux%u @ %ubpp addr=%llx pitch=%u\n",
-				fb_info.width, fb_info.height, fb_info.bpp,
-				(unsigned long long)fb_info.addr, fb_info.pitch);
+			kprintf("framebuffer console: %ux%u @ %ubpp\n",
+				fb_info.width, fb_info.height, fb_info.bpp);
 		}
+
+		early_fb_debug(0x00FFFF00, 3);	/* yellow bar: fb init done */
 	}
 
 	/* Architecture-specific full init (page allocator, etc.) */
@@ -148,14 +186,10 @@ void kernel_main(void)
 		anx_iface_env_define("headless-agent",
 		                      "anx:env/headless-agent/v1",
 		                      ANX_ENGINE_RENDERER_HEADLESS);
-		if (anx_fb_available()) {
+		if (anx_fb_available())
 			anx_iface_env_activate("visual-desktop");
-			anx_iface_compositor_start("visual-desktop");
-			anx_iface_frame_scheduler_init(30);
-		} else {
+		else
 			anx_iface_env_activate("headless-agent");
-			anx_iface_compositor_start("headless-agent");
-		}
 		kprintf("interface plane initialized\n");
 	}
 
@@ -170,8 +204,7 @@ void kernel_main(void)
 	anx_auth_init();
 	anx_credstore_init();
 
-	/* Parse boot command line for credentials: cred:name=value, and flags */
-	bool install_mode = false;
+	/* Parse boot command line for credentials: cred:name=value */
 	{
 		const char *cmdline = arch_boot_cmdline();
 
@@ -203,17 +236,6 @@ void kernel_main(void)
 						offset >= 0 ? "+" : "",
 						(int)offset);
 					p = v;
-					continue;
-				}
-
-				/* Look for "install" flag */
-				if (p[0] == 'i' && p[1] == 'n' &&
-				    p[2] == 's' && p[3] == 't' &&
-				    p[4] == 'a' && p[5] == 'l' &&
-				    p[6] == 'l' &&
-				    (p[7] == ' ' || p[7] == '\0')) {
-					install_mode = true;
-					p += 7;
 					continue;
 				}
 
@@ -268,152 +290,41 @@ void kernel_main(void)
 	anx_pci_init();
 	PERF_END();
 
-	/* 10. Driver probe — storage, network, accelerators */
-	PERF_BEGIN("drivers_probe");
-	anx_drivers_probe();
+	/* 10. Block device */
+	PERF_BEGIN("virtio_blk_init");
+	anx_virtio_blk_init();
 	PERF_END();
 
-	/* 10b. Audio subsystem — initializes the mixer and probes hardware
-	 * audio sinks (HDA on x86_64 / arm64-with-PCIe-HDA, Apple Silicon
-	 * native on M1/M2 once codec drivers land).  Always succeeds: if
-	 * no HW backend binds, the null/capture/wav sinks remain. */
-	PERF_BEGIN("audio_init");
-	anx_audio_init();
-	anx_video_init();
-	PERF_END();
-	if (anx_blk_ready()) {
-		int ds_ret = anx_disk_store_init();
+	/* 11. Network device and IP stack */
+	if (anx_virtio_net_init() == ANX_OK) {
+		struct anx_net_config net_cfg;
 
-		if (ds_ret != ANX_OK) {
-			/* First boot on this disk — format automatically */
-			kprintf("disk: no store found, formatting...\n");
-			ds_ret = anx_disk_format("anunix");
-			if (ds_ret == ANX_OK)
-				ds_ret = anx_disk_store_init();
+		/* Initialize minimal stack for DHCP */
+		anx_arp_init();
+		anx_udp_init();
+
+		/* Try DHCP first (5s timeout) */
+		PERF_BEGIN("dhcp_discover");
+		kprintf("dhcp: discovering...\n");
+		if (anx_dhcp_discover(&net_cfg) != ANX_OK) {
+			/* Fall back to QEMU user-mode defaults */
+			net_cfg.ip      = ANX_IP4(10, 0, 2, 15);
+			net_cfg.netmask = ANX_IP4(255, 255, 255, 0);
+			net_cfg.gateway = ANX_IP4(10, 0, 2, 2);
+			net_cfg.dns     = ANX_IP4(10, 0, 2, 3);
+			kprintf("dhcp: timeout, using static 10.0.2.15\n");
 		}
-		if (ds_ret == ANX_OK) {
-			kprintf("disk: object store mounted\n");
-			anx_bootlog_disk_init();
-		} else {
-			kprintf("disk: store init failed (%d)\n", ds_ret);
-		}
+		PERF_END();
+		PERF_BEGIN("net_stack_init");
+		anx_net_stack_init(&net_cfg);
+		PERF_END();
 	}
-
-	/* Load previously persisted PAL state before hardware priming so that
-	 * organic session data from prior boots is not overwritten by priming */
-	anx_pal_persist_load();
-	anx_credstore_load();
-	anx_model_client_load();
-	anx_uobj_load();
-
-	/* Prime PAL cross-session priors from detected hardware */
-	anx_pal_prime_hardware();
-
-	/* 11. Workflow Objects (RFC-0018) + built-in template library
-	 * Must come before JEPA: anx_jepa_init() registers agent workflows
-	 * via anx_wf_create(), which requires wf_initialized == true. */
-	anx_wf_init();
-	anx_wf_lib_init();
-	kprintf("workflow subsystem initialized\n");
-
-	/* 12. AI accelerators (non-fatal — hardware may not be present)
-	 * JEPA now runs after workflow init so jepa-agent-loop can register. */
-	anx_xdna_init();	/* AMD XDNA NPU (Ryzen AI) */
-	anx_jepa_init();	/* JEPA latent-state world model (non-fatal) */
-
-	/* 13. VM subsystem (RFC-0017) */
-	anx_vm_init();
-	kprintf("vm subsystem initialized\n");
-
-	/* 16. IBAL loop session primitive + EBM scorer registry (RFC-0020) */
-	anx_loop_init();
-	anx_ebm_init();
-
-	/* 15. Visual theme (RFC-0019) — default Pretty on FB, Boring headless */
-	anx_theme_init(anx_fb_available() ? ANX_THEME_PRETTY : ANX_THEME_BORING);
-	kprintf("theme subsystem initialized\n");
-
-	/* 12. Network bring-up (drivers already probed above) */
-	{
-		/* Auto-connect WiFi if cred:wifi-ssid was passed on cmdline.
-		 * Only runs when MT7925 is the active driver (virtio/e1000 absent). */
-		if (anx_net_probe_ok() && anx_mt7925_state() == MT7925_STATE_FW_UP) {
-			char wifi_ssid[64]  = {0};
-			char wifi_pass[128] = {0};
-			uint32_t ssid_len = 0, pass_len = 0;
-
-			if (anx_credential_read("wifi-ssid", wifi_ssid,
-						sizeof(wifi_ssid) - 1,
-						&ssid_len) == ANX_OK &&
-			    ssid_len > 0) {
-				anx_credential_read("wifi-pass", wifi_pass,
-						    sizeof(wifi_pass) - 1,
-						    &pass_len);
-				anx_mt7925_connect(wifi_ssid,
-						   pass_len > 0 ? wifi_pass
-						                : NULL);
-			}
-		}
-
-		if (anx_net_probe_ok()) {
-			struct anx_net_config net_cfg;
-
-			anx_arp_init();
-			anx_udp_init();
-
-			PERF_BEGIN("dhcp_discover");
-			kprintf("dhcp: discovering...\n");
-			if (anx_dhcp_discover(&net_cfg) != ANX_OK) {
-				net_cfg.ip      = ANX_IP4(10, 0, 2, 15);
-				net_cfg.netmask = ANX_IP4(255, 255, 255, 0);
-				net_cfg.gateway = ANX_IP4(10, 0, 2, 2);
-				net_cfg.dns     = ANX_IP4(10, 0, 2, 3);
-				kprintf("dhcp: timeout, using static 10.0.2.15\n");
-			}
-			PERF_END();
-			PERF_BEGIN("net_stack_init");
-			anx_net_stack_init(&net_cfg);
-			PERF_END();
-
-			/* Auto-sync time from NTP (pool.ntp.org via DNS) */
-			{
-				uint32_t ntp_ip;
-				if (anx_dns_resolve("pool.ntp.org", &ntp_ip) == ANX_OK)
-					anx_ntp_sync(ntp_ip);
-			}
-		}
-	}
-
-	/* Start HTTP API server (after network init) */
-	anx_httpd_init(8080);
-
-	/* Start SSH server (after network + credential store) */
-	anx_sshd_init(22);
-
-	/* Window manager (after iface, theme, and network) */
-	if (anx_fb_available()) {
-		anx_wm_init();
-		kprintf("window manager initialized\n");
-	}
-
-	/* Start browser engine (ANX-Browser Protocol on port 9191) */
-	anx_browser_init(9191);
 
 	kprintf("kernel init complete -- all subsystems online\n");
 
 	/* Show boot performance profile */
 	anx_perf_report();
 
-	/* Install mode: run text installer instead of desktop */
-	if (install_mode) {
-		kprintf("install: starting installer\n");
-		anx_installer_interactive();
-		return;
-	}
-
-	/* Boot into desktop on framebuffer hardware; fall back to shell */
-	if (anx_fb_available())
-		anx_wm_run();
-	else
-		anx_shell_run();
+	/* Enter interactive monitor shell */
+	anx_shell_run();
 }

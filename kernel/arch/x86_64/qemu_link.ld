@@ -1,18 +1,22 @@
 /*
  * qemu_link.ld — Linker script for 32-bit multiboot QEMU wrapper.
  *
- * Single PT_LOAD segment starting at 0x100000.  The multiboot header
- * is the very first bytes, so QEMU's 8 KiB scan always finds the magic.
+ * Layout:
+ *   0x100000  .multiboot + .text + .rodata (wrapper entry code)
+ *   0x200000  .bss (page tables + stack — safe from kernel copy)
+ *   0x300000  .kernel (embedded 64-bit kernel binary)
+ *   0x310000  .trampoline (copies kernel to 0x100000 and jumps)
  *
- * Page tables and stack live at hardcoded addresses 0x090000–0x096000
- * (defined directly in qemu_boot.S, not via .bss) so no BSS PT_LOAD
- * segment is emitted to confuse QEMU's multiboot detector.
+ * The kernel binary is copied from 0x300000 to 0x100000 at boot.
+ * The .multiboot header must be within the first 8 KiB of the file,
+ * so it's placed at the lowest load address.
  */
 
 ENTRY(_start)
 OUTPUT_FORMAT(elf32-i386)
 
 SECTIONS {
+    /* Wrapper code at lowest address (multiboot in first 8 KiB) */
     . = 0x100000;
 
     .multiboot : {
@@ -31,7 +35,13 @@ SECTIONS {
         *(.data .data.*)
     }
 
-    /* Kernel payload — embedded 64-bit binary */
+    /* Page tables and stack well above kernel copy range */
+    . = 0x200000;
+    .bss : {
+        *(.bss .bss.*)
+    }
+
+    /* Kernel payload above BSS */
     . = ALIGN(4096);
     _kernel_payload = .;
     .kernel : {
@@ -40,14 +50,13 @@ SECTIONS {
     _kernel_payload_end = .;
     _kernel_size = _kernel_payload_end - _kernel_payload;
 
-    /* Trampoline — 64-bit code that copies kernel and jumps */
+    /* Trampoline above kernel payload */
     . = ALIGN(4096);
     .trampoline : {
         *(.trampoline)
     }
 
     /DISCARD/ : {
-        *(.bss .bss.*)
         *(.comment)
         *(.note.*)
     }

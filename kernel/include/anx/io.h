@@ -2,7 +2,8 @@
  * anx/io.h — Port I/O and MMIO accessors.
  *
  * Provides inline functions for x86_64 I/O port access (in/out)
- * and memory-mapped I/O. Port I/O is x86-only; MMIO is portable.
+ * and memory-mapped I/O. These replace the scattered static inline
+ * definitions in arch_init.c and exception.c.
  */
 
 #ifndef ANX_IO_H
@@ -10,10 +11,9 @@
 
 #include <anx/types.h>
 
-/* --- Port I/O (x86_64 only) --- */
+/* --- Port I/O (x86_64) --- */
 
-#ifdef __x86_64__
-
+/* Read a byte from an I/O port */
 static inline uint8_t anx_inb(uint16_t port)
 {
 	uint8_t val;
@@ -21,6 +21,7 @@ static inline uint8_t anx_inb(uint16_t port)
 	return val;
 }
 
+/* Read a 16-bit word from an I/O port */
 static inline uint16_t anx_inw(uint16_t port)
 {
 	uint16_t val;
@@ -28,6 +29,7 @@ static inline uint16_t anx_inw(uint16_t port)
 	return val;
 }
 
+/* Read a 32-bit dword from an I/O port */
 static inline uint32_t anx_inl(uint16_t port)
 {
 	uint32_t val;
@@ -35,47 +37,33 @@ static inline uint32_t anx_inl(uint16_t port)
 	return val;
 }
 
+/* Write a byte to an I/O port */
 static inline void anx_outb(uint8_t val, uint16_t port)
 {
 	__asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
+/* Write a 16-bit word to an I/O port */
 static inline void anx_outw(uint16_t val, uint16_t port)
 {
 	__asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
 }
 
+/* Write a 32-bit dword to an I/O port */
 static inline void anx_outl(uint32_t val, uint16_t port)
 {
 	__asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
 }
 
+/* Small delay via dummy write to ISA post-code port */
 static inline void anx_io_wait(void)
 {
 	anx_outb(0, 0x80);
 }
 
-#else /* !__x86_64__ */
+/* --- Memory-mapped I/O --- */
 
-/* ARM64 and other architectures: port I/O is not available */
-static inline uint8_t anx_inb(uint16_t port)
-{ (void)port; return 0; }
-static inline uint16_t anx_inw(uint16_t port)
-{ (void)port; return 0; }
-static inline uint32_t anx_inl(uint16_t port)
-{ (void)port; return 0; }
-static inline void anx_outb(uint8_t val, uint16_t port)
-{ (void)val; (void)port; }
-static inline void anx_outw(uint16_t val, uint16_t port)
-{ (void)val; (void)port; }
-static inline void anx_outl(uint32_t val, uint16_t port)
-{ (void)val; (void)port; }
-static inline void anx_io_wait(void) {}
-
-#endif /* __x86_64__ */
-
-/* --- Memory-mapped I/O (portable) --- */
-
+/* Read 8/16/32 bits from an MMIO address */
 static inline uint8_t anx_mmio_read8(volatile void *addr)
 {
 	return *(volatile uint8_t *)addr;
@@ -91,6 +79,7 @@ static inline uint32_t anx_mmio_read32(volatile void *addr)
 	return *(volatile uint32_t *)addr;
 }
 
+/* Write 8/16/32 bits to an MMIO address */
 static inline void anx_mmio_write8(volatile void *addr, uint8_t val)
 {
 	*(volatile uint8_t *)addr = val;

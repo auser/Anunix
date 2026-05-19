@@ -67,8 +67,7 @@ void cmd_rm_obj(int argc, char **argv)
 		return;
 	}
 
-	/* Remove namespace binding and disk journal entry */
+	/* Remove namespace binding */
 	anx_ns_unbind(ns_name, path);
-	uobj_remove(ns_name, path);
 	kprintf("deleted %s:%s\n", ns_name, path);
 }

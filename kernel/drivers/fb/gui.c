@@ -1,11 +1,11 @@
 /*
  * gui.c — Graphical user environment.
  *
- * Aether design language:
- * - Deep navy (#0B1A2B) desktop wallpaper
- * - Floating topbar pill (navy-800, 10 px inset) with 1 px teal accent border
- * - Navy-900 (#0E2338) terminal window, 14 px margins
- * - Warm paper-white (#F7F5F1) terminal text
+ * Tiled window manager with:
+ * - Light sky blue (#87CEEB) background
+ * - Top bar with centered time in white (2x scale = 16x32 font)
+ * - Midnight blue (#191970) terminal window with 30px margin
+ * - White text in the terminal
  * - Functional anx> shell
  */
 
@@ -34,40 +34,36 @@ static uint32_t term_w, term_h;	/* pixel size of terminal area */
 static uint32_t term_cols, term_rows;	/* character grid */
 static uint32_t cur_col, cur_row;	/* cursor position in chars */
 
-/* Computed at init time from framebuffer width; see anx_gui_init() */
-static uint32_t term_font_scale;
-static uint32_t time_font_scale;
-static uint32_t term_char_w;
-static uint32_t term_char_h;
-
-static uint32_t topbar_inset;	/* pill gap from screen edges (px) */
-static uint32_t topbar_h;	/* pill height, computed at init */
+#define TERM_FONT_SCALE	1	/* 1x = 8x16, 2x = 16x32 */
+#define TERM_CHAR_W	(ANX_FONT_WIDTH * TERM_FONT_SCALE)
+#define TERM_CHAR_H	(ANX_FONT_HEIGHT * TERM_FONT_SCALE)
+#define TIME_FONT_SCALE	2	/* 2x for top bar time */
 
 /* --- Scaled font rendering --- */
 
 void anx_gui_draw_char_scaled(uint32_t px, uint32_t py, char c,
 			       uint32_t fg, uint32_t bg, uint32_t scale)
 {
-	const uint16_t *glyph = anx_font_glyph(c);
+	const uint8_t *glyph = anx_font_glyph(c);
 	uint32_t row, col, sy, sx;
 
 	for (row = 0; row < ANX_FONT_HEIGHT; row++) {
-		uint16_t bits = glyph[row];
+		uint8_t bits = glyph[row];
 
-		for (sy = 0; sy < scale; sy++) {
-			uint32_t scan = py + row * scale + sy;
-			uint32_t *dst;
+		for (col = 0; col < ANX_FONT_WIDTH; col++) {
+			uint32_t color = (bits & (0x80 >> col)) ? fg : bg;
 
-			if (scan >= screen_h)
-				continue;
-			dst = anx_fb_row_ptr(scan);
-			for (col = 0; col < ANX_FONT_WIDTH; col++) {
-				uint32_t color = (bits & (0x800u >> col)) ? fg : bg;
-				uint32_t bx = px + col * scale;
+			for (sy = 0; sy < scale; sy++) {
+				uint32_t y = py + row * scale + sy;
 
+				if (y >= screen_h)
+					continue;
 				for (sx = 0; sx < scale; sx++) {
-					if (bx + sx < screen_w)
-						dst[bx + sx] = color;
+					uint32_t x = px + col * scale + sx;
+
+					if (x >= screen_w)
+						continue;
+					anx_fb_putpixel(x, y, color);
 				}
 			}
 		}
@@ -88,27 +84,21 @@ void anx_gui_draw_string_scaled(uint32_t x, uint32_t y, const char *s,
 
 static void draw_background(void)
 {
-	anx_fb_clear(ANX_COLOR_AX_BG);
+	anx_fb_clear(ANX_COLOR_SKY_BLUE);
 }
 
 static void draw_topbar(void)
 {
-	uint32_t bw = screen_w > 2 * topbar_inset
-		      ? screen_w - 2 * topbar_inset : screen_w;
-
-	/* Floating panel pill: inset from all screen edges */
-	anx_fb_fill_rect(topbar_inset, topbar_inset, bw, topbar_h,
-			  ANX_COLOR_AX_PANEL);
-	/* 1 px teal accent line at the bottom of the pill (E17-style bevel) */
-	anx_fb_fill_rect(topbar_inset, topbar_inset + topbar_h - 1, bw, 1,
-			  ANX_COLOR_AX_TEAL);
+	/* Dark blue strip across the top for the clock */
+	anx_fb_fill_rect(0, 0, screen_w, ANX_GUI_TOPBAR_HEIGHT,
+			  ANX_COLOR_MIDNIGHT);
 }
 
 static void draw_terminal_frame(void)
 {
-	/* Fill the terminal area */
+	/* Fill the terminal area with midnight blue */
 	anx_fb_fill_rect(term_x, term_y, term_w, term_h,
-			  ANX_COLOR_AX_SURFACE);
+			  ANX_COLOR_MIDNIGHT);
 }
 
 /* --- Time display --- */
@@ -128,133 +118,95 @@ static uint8_t bcd_to_bin(uint8_t bcd)
 
 static uint8_t last_drawn_min = 0xFF;
 
-void anx_gui_get_time(char *buf, uint32_t buflen)
-{
-	uint8_t hrs, mins, secs, status_b;
-	int32_t h;
-
-	if (buflen < 6)
-		return;
-
-	secs     = rtc_read(0x00);
-	mins     = rtc_read(0x02);
-	hrs      = rtc_read(0x04);
-	status_b = rtc_read(0x0B);
-	(void)secs;
-
-	if (!(status_b & 0x04)) {
-		mins = bcd_to_bin(mins);
-		hrs  = bcd_to_bin(hrs);
-	}
-
-	h = (int32_t)hrs + utc_offset_hours;
-	if (h < 0)  h += 24;
-	if (h >= 24) h -= 24;
-
-	buf[0] = '0' + (char)(h / 10);
-	buf[1] = '0' + (char)(h % 10);
-	buf[2] = ':';
-	buf[3] = '0' + (char)(mins / 10);
-	buf[4] = '0' + (char)(mins % 10);
-	buf[5] = '\0';
-}
-
-void anx_gui_get_date(char *buf, uint32_t buflen)
-{
-	static const char * const day_names[8] = {
-		"???", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
-	};
-	uint8_t dow, day, status_b;
-	const char *dn;
-	uint32_t i;
-
-	if (buflen < 8)
-		return;
-
-	dow      = rtc_read(0x06);   /* CMOS weekday: 1=Sunday..7=Saturday */
-	day      = rtc_read(0x07);   /* day of month (BCD or binary) */
-	status_b = rtc_read(0x0B);
-
-	if (!(status_b & 0x04)) {
-		day = bcd_to_bin(day);
-		/* weekday register is 1-7 — not BCD */
-	}
-
-	if (dow < 1 || dow > 7)
-		dow = 0;
-	dn = day_names[dow];
-
-	/* "Mon 26" */
-	for (i = 0; i < 3; i++)
-		buf[i] = dn[i];
-	buf[3] = ' ';
-	buf[4] = '0' + (char)(day / 10);
-	buf[5] = '0' + (char)(day % 10);
-	buf[6] = '\0';
-}
-
 void anx_gui_update_time(void)
 {
+	uint8_t hrs, mins, secs;
+	uint8_t status_b;
 	char timebuf[16];
 	uint32_t time_w, time_x;
-	uint8_t mins;
 
 	if (!gui_ready)
 		return;
 
+	/* Read CMOS RTC (UTC) */
+	secs = rtc_read(0x00);
+	mins = rtc_read(0x02);
+	hrs  = rtc_read(0x04);
+	status_b = rtc_read(0x0B);
+
+	(void)secs;
+
+	/* Convert BCD to binary if needed */
+	if (!(status_b & 0x04)) {
+		secs = bcd_to_bin(secs);
+		mins = bcd_to_bin(mins);
+		hrs  = bcd_to_bin(hrs);
+	}
+
+	/* Apply timezone offset */
+	{
+		int32_t h = (int32_t)hrs + utc_offset_hours;
+
+		if (h < 0) h += 24;
+		if (h >= 24) h -= 24;
+		hrs = (uint8_t)h;
+	}
+
 	/* Only redraw when the minute changes */
-	mins = bcd_to_bin(rtc_read(0x02));
-	if (!(rtc_read(0x0B) & 0x04))
-		mins = bcd_to_bin(rtc_read(0x02));
 	if (mins == last_drawn_min)
 		return;
 	last_drawn_min = mins;
 
-	anx_gui_get_time(timebuf, sizeof(timebuf));
+	/* Format HH:MM */
+	timebuf[0] = '0' + (char)(hrs / 10);
+	timebuf[1] = '0' + (char)(hrs % 10);
+	timebuf[2] = ':';
+	timebuf[3] = '0' + (char)(mins / 10);
+	timebuf[4] = '0' + (char)(mins % 10);
+	timebuf[5] = '\0';
 
 	/* Center the time string in the top bar */
-	time_w = 5 * ANX_FONT_WIDTH * time_font_scale;
+	time_w = 5 * ANX_FONT_WIDTH * TIME_FONT_SCALE;
 	time_x = (screen_w - time_w) / 2;
 
-	/* Clear the time area within the panel pill */
-	anx_fb_fill_rect(time_x - 4, topbar_inset + 2,
-			  time_w + 8, topbar_h - 4,
-			  ANX_COLOR_AX_PANEL);
+	/* Clear the time area */
+	anx_fb_fill_rect(time_x - 4, 4, time_w + 8,
+			  ANX_FONT_HEIGHT * TIME_FONT_SCALE + 4,
+			  ANX_COLOR_MIDNIGHT);
 
 	anx_gui_draw_string_scaled(time_x,
-				    topbar_inset +
-				    (topbar_h - ANX_FONT_HEIGHT * time_font_scale) / 2,
+				    (ANX_GUI_TOPBAR_HEIGHT -
+				     ANX_FONT_HEIGHT * TIME_FONT_SCALE) / 2,
 				    timebuf, ANX_COLOR_WHITE,
-				    ANX_COLOR_AX_PANEL, time_font_scale);
+				    ANX_COLOR_MIDNIGHT, TIME_FONT_SCALE);
 }
 
 /* --- Terminal output --- */
 
 static void terminal_scroll(void)
 {
+	/* Scroll terminal content up by one line */
+	uint32_t line_bytes;
+	uint32_t y;
 	const struct anx_fb_info *info = anx_fb_get_info();
-	uint8_t *base;
-	uint32_t pitch;
 
 	if (!info)
 		return;
 
-	pitch = info->pitch;
-	base  = (uint8_t *)(uintptr_t)info->addr;
+	line_bytes = info->pitch;
 
-	/*
-	 * Bulk-move the entire terminal block (full pitch per row) in one call.
-	 * Copying the horizontal margins too is harmless since they are static
-	 * background that never changes.  This avoids (term_h - term_char_h)
-	 * individual per-scanline copies, which is the scroll-lag bottleneck.
-	 */
-	anx_memmove(base + term_y * pitch,
-		    base + (term_y + term_char_h) * pitch,
-		    (term_h - term_char_h) * pitch);
+	/* Move each row up by TERM_CHAR_H pixels */
+	for (y = term_y; y < term_y + term_h - TERM_CHAR_H; y++) {
+		uint8_t *dst = (uint8_t *)(uintptr_t)info->addr +
+			       y * line_bytes;
+		uint8_t *src = dst + TERM_CHAR_H * line_bytes;
 
-	/* Clear the last character row */
-	anx_fb_fill_rect(term_x, term_y + term_h - term_char_h,
-			  term_w, term_char_h, ANX_COLOR_AX_SURFACE);
+		anx_memcpy(dst + term_x * 4, src + term_x * 4, term_w * 4);
+	}
+
+	/* Clear the last line */
+	anx_fb_fill_rect(term_x, term_y + term_h - TERM_CHAR_H,
+			  term_w, TERM_CHAR_H, ANX_COLOR_MIDNIGHT);
 }
 
 static void terminal_newline(void)
@@ -284,12 +236,12 @@ void anx_gui_terminal_putc(char c)
 	case '\b':
 		if (cur_col > 0) {
 			cur_col--;
-			px = term_x + cur_col * term_char_w;
-			py = term_y + cur_row * term_char_h;
+			px = term_x + cur_col * TERM_CHAR_W;
+			py = term_y + cur_row * TERM_CHAR_H;
 			anx_gui_draw_char_scaled(px, py, ' ',
-						  ANX_COLOR_AX_TEXT,
-						  ANX_COLOR_AX_SURFACE,
-						  term_font_scale);
+						  ANX_COLOR_WHITE,
+						  ANX_COLOR_MIDNIGHT,
+						  TERM_FONT_SCALE);
 		}
 		return;
 	case '\t': {
@@ -307,12 +259,12 @@ void anx_gui_terminal_putc(char c)
 	if (c < 0x20 || c >= 0x7F)
 		return;
 
-	px = term_x + cur_col * term_char_w;
-	py = term_y + cur_row * term_char_h;
+	px = term_x + cur_col * TERM_CHAR_W;
+	py = term_y + cur_row * TERM_CHAR_H;
 
 	anx_gui_draw_char_scaled(px, py, c,
-				  ANX_COLOR_AX_TEXT, ANX_COLOR_AX_SURFACE,
-				  term_font_scale);
+				  ANX_COLOR_WHITE, ANX_COLOR_MIDNIGHT,
+				  TERM_FONT_SCALE);
 
 	cur_col++;
 	if (cur_col >= term_cols)
@@ -332,31 +284,14 @@ void anx_gui_init(void)
 	screen_w = info->width;
 	screen_h = info->height;
 
-	/* DPI-aware scale: pick readable font size for this resolution */
-	if (screen_w >= 3840)
-		term_font_scale = 4;
-	else if (screen_w >= 2560)
-		term_font_scale = 3;
-	else if (screen_w >= 1920)
-		term_font_scale = 2;
-	else
-		term_font_scale = 1;
-	time_font_scale = term_font_scale + 1;
-	term_char_w     = ANX_FONT_WIDTH  * term_font_scale;
-	term_char_h     = ANX_FONT_HEIGHT * term_font_scale;
-
-	/* Topbar pill: 10 px inset from edges; height sized to fit the clock */
-	topbar_inset = 10;
-	topbar_h     = ANX_FONT_HEIGHT * time_font_scale + 16;
-
-	/* Terminal: below the pill, 14 px margins on all sides */
+	/* Calculate terminal geometry */
 	term_x = ANX_GUI_MARGIN;
-	term_y = topbar_inset + topbar_h + ANX_GUI_MARGIN;
+	term_y = ANX_GUI_TOPBAR_HEIGHT + ANX_GUI_MARGIN;
 	term_w = screen_w - 2 * ANX_GUI_MARGIN;
-	term_h = screen_h - term_y - ANX_GUI_MARGIN;
+	term_h = screen_h - ANX_GUI_TOPBAR_HEIGHT - 2 * ANX_GUI_MARGIN;
 
-	term_cols = term_w / term_char_w;
-	term_rows = term_h / term_char_h;
+	term_cols = term_w / TERM_CHAR_W;
+	term_rows = term_h / TERM_CHAR_H;
 
 	cur_col = 0;
 	cur_row = 0;
@@ -373,23 +308,4 @@ void anx_gui_init(void)
 bool anx_gui_active(void)
 {
 	return gui_ready;
-}
-
-void anx_gui_terminal_clear(void)
-{
-	if (!gui_ready)
-		return;
-	anx_fb_fill_rect(term_x, term_y, term_w, term_h, ANX_COLOR_AX_SURFACE);
-	cur_col = 0;
-	cur_row = 0;
-}
-
-void anx_gui_disable(void)
-{
-	gui_ready = false;
-}
-
-int32_t anx_gui_get_tz_offset(void)
-{
-	return utc_offset_hours;
 }

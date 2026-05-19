@@ -102,8 +102,6 @@ struct anx_renderer_ops {
 #define ANX_CAP_ENV_SWITCH     (1u << 26)
 #define ANX_CAP_RENDERER_REG   (1u << 27)
 
-struct anx_event;	/* forward — defined below in Event Objects section */
-
 /* ------------------------------------------------------------------ */
 /* Surface Object                                                       */
 /* ------------------------------------------------------------------ */
@@ -128,31 +126,15 @@ struct anx_surface {
 	uint32_t                 width, height;
 	uint32_t                 z_order;        /* higher = closer to front */
 
-	/* P1-001: Dirty-rect damage tracking (surface-relative coordinates). */
-	int32_t                  damage_x, damage_y;
-	uint32_t                 damage_w, damage_h;
-	bool                     damage_valid;   /* pending damage to render */
-	uint32_t                 commit_count;   /* incremented on each committed frame */
-
 	/* Hierarchy */
 	anx_oid_t                parent_oid;
 	struct anx_list_head     children;       /* child surfaces */
-
-	/* Optional window title (set by creator; shown in menubar) */
-	char                     title[64];
-
-	/* Set by WM when user explicitly minimizes; cleared on restore.
-	 * Distinguishes user-minimized from workspace-hidden surfaces. */
-	bool                     user_minimized;
 
 	/* Internal: hashtable chain and z-order list membership */
 	struct anx_list_head     ht_node;
 	struct anx_list_head     z_node;
 
 	struct anx_spinlock      lock;
-
-	/* Optional key event handler — called by WM dispatch for focused surface */
-	void (*on_event)(struct anx_surface *surf, const struct anx_event *ev);
 };
 
 /* ------------------------------------------------------------------ */
@@ -179,20 +161,10 @@ enum anx_event_type {
 	ANX_EVENT_SURFACE_DESTROYED,
 };
 
-/* Event priority levels for QoS — ordered from highest to lowest for integer comparison */
-enum anx_event_prio {
-	ANX_EVENT_PRIO_CRITICAL = 0,  /* input events — pointer, key, touch; also default for uninit */
-	ANX_EVENT_PRIO_NORMAL = 1,     /* default for most events */
-	ANX_EVENT_PRIO_LOW = 2,        /* cosmetic updates — surface damage hints */
-	ANX_EVENT_PRIO_COUNT,          /* must be last */
-	ANX_EVENT_PRIO_UNSET = -1,     /* sentinel for uninitialized (outside valid range) */
-};
-
 struct anx_event {
 	anx_oid_t           oid;            /* event's own OID */
 	enum anx_event_type type;
-	enum anx_event_prio priority;      /* QoS priority */
-	uint64_t            timestamp_ns;   /* posted timestamp */
+	uint64_t            timestamp_ns;
 	anx_oid_t           target_surf;    /* surface this event targets */
 	anx_cid_t           source_cell;
 	uint32_t            device_id;
@@ -245,11 +217,6 @@ int anx_iface_surface_destroy(struct anx_surface *surf);
 /* Surface queries */
 int anx_iface_surface_list(anx_oid_t *oids_out, uint32_t max,
                             uint32_t *count_out);
-/* Query the current accumulated damage rect for a surface. */
-void anx_iface_surface_damage_query(struct anx_surface *surf,
-                                     int32_t *x_out, int32_t *y_out,
-                                     uint32_t *w_out, uint32_t *h_out,
-                                     bool *valid_out);
 int anx_iface_surface_lookup(anx_oid_t oid, struct anx_surface **out);
 
 /* Event routing */
@@ -258,35 +225,6 @@ int anx_iface_event_subscribe(anx_oid_t surf_oid, anx_cid_t cell_cid);
 int anx_iface_event_unsubscribe(anx_oid_t surf_oid, anx_cid_t cell_cid);
 /* Poll for the next event addressed to cell_cid; returns ANX_ENOENT if empty */
 int anx_iface_event_poll(anx_cid_t cell_cid, struct anx_event *out);
-/* Poll for next WM-targeted event (target_surf == null) — used by anx_wm_run() */
-int anx_iface_event_poll_wm(struct anx_event *out);
-/* Poll for next event addressed to a specific surface OID — used by WM dispatch */
-int anx_iface_event_poll_surf(anx_oid_t surf_oid, struct anx_event *out);
-
-#define ANX_IFACE_EVENT_RING_SIZE 256u
-
-/* Latency histogram buckets (nanoseconds) */
-#define ANX_LAT_BUCKET_0_NS   1000000ULL   /* <1ms:     <1,000,000 ns */
-#define ANX_LAT_BUCKET_1_NS   5000000ULL   /* 1-5ms:    1,000,000-5,000,000 ns */
-#define ANX_LAT_BUCKET_2_NS  10000000ULL   /* 5-10ms:   5,000,000-10,000,000 ns */
-#define ANX_LAT_BUCKET_3_NS  10000001ULL   /* >10ms:    >=10,000,001 ns */
-#define ANX_LAT_BUCKETS       4
-
-struct anx_iface_event_stats {
-	uint64_t posted;
-	uint64_t overflow_drops;
-	uint32_t current_depth;               /* events currently in ring */
-	uint64_t latency_histogram[ANX_LAT_BUCKETS]; /* <1ms, 1-5ms, 5-10ms, >10ms */
-};
-
-/* Resets event queue state (ring + subscriptions + counters). */
-void anx_iface_event_reset(void);
-void anx_iface_event_stats(struct anx_iface_event_stats *out);
-void anx_iface_event_stats_full(struct anx_iface_event_stats *out);
-
-/* Backpressure threshold configuration (fraction of ring size, 1-255). */
-void anx_iface_event_set_backpressure_threshold(uint32_t fraction_of_ring);
-uint32_t anx_iface_event_backpressure_threshold(void);
 
 /* Renderer registration */
 int       anx_iface_renderer_register(int renderer_class,
@@ -310,65 +248,15 @@ int anx_renderer_gpu_register(void);
 int anx_renderer_headless_register(void);
 
 /* ------------------------------------------------------------------ */
-/* Shared-memory IPC v0 (userspace <-> compositor)                     */
-/* ------------------------------------------------------------------ */
-
-#define ANX_IFACE_SHM_MAX            32u
-#define ANX_IFACE_SHM_MAX_BYTES      (64u * 1024u * 1024u)
-#define ANX_IFACE_SHM_RIGHT_PRODUCE  (1u << 0)
-#define ANX_IFACE_SHM_RIGHT_CONSUME  (1u << 1)
-
-/* Create a shared buffer owned by owner_cid. */
-int anx_iface_shm_create(anx_cid_t owner_cid, uint32_t size_bytes, anx_oid_t *out_oid);
-/* Owner grants rights to another cell. */
-int anx_iface_shm_grant(anx_oid_t shm_oid, anx_cid_t owner_cid,
-                        anx_cid_t grantee_cid, uint32_t rights_mask);
-/* Map requires granted rights; returns raw pointer and size for zero-copy access. */
-int anx_iface_shm_map(anx_oid_t shm_oid, anx_cid_t cell_cid, uint32_t required_right,
-                      void **out_ptr, uint32_t *out_size, uint32_t *out_sequence);
-/* Producer updates payload and bumps sequence. */
-int anx_iface_shm_publish(anx_oid_t shm_oid, anx_cid_t producer_cid,
-                          const void *data, uint32_t len, uint32_t *out_sequence);
-/* Consumer copies latest payload + sequence. */
-int anx_iface_shm_consume(anx_oid_t shm_oid, anx_cid_t consumer_cid,
-                          void *out, uint32_t out_max,
-                          uint32_t *out_len, uint32_t *out_sequence);
-
-/* ------------------------------------------------------------------ */
 /* Compositor support                                                   */
 /* ------------------------------------------------------------------ */
 
-#define ANX_IFACE_COMPOSITOR_MAX 4u
-
-struct anx_iface_compositor_stats {
-	char domain[ANX_ENV_NAME_MAX];
-	anx_cid_t cell_cid;
-	bool running;
-	bool crashed;
-	uint64_t repaint_cycles;
-	uint64_t committed_surfaces;
-	uint32_t last_cycle_commits;
-	uint64_t last_cycle_ns;       /* wall time of last repaint cycle (ns) */
-};
-
-/* Start compositor cell for a domain. Exactly one per domain. */
-int anx_iface_compositor_start(const char *domain);
-/* Stop a running compositor cell for a domain. */
-int anx_iface_compositor_stop(const char *domain);
-/* Simulate compositor cell crash for recovery tests. */
-int anx_iface_compositor_crash(const char *domain);
-/* Restart crashed compositor cell while preserving surface registry. */
-int anx_iface_compositor_restart(const char *domain);
-/* Run one deterministic repaint cycle through compositor cell runtime. */
-int anx_iface_compositor_tick(const char *domain, uint32_t *committed_out);
-/* Query compositor cell state and counters. */
-int anx_iface_compositor_stats(const char *domain, struct anx_iface_compositor_stats *out);
-
-/* Legacy helper: repaint via visual-desktop compositor domain. */
+/*
+ * Walk all surfaces back-to-front, commit every ANX_SURF_VISIBLE surface,
+ * and set keyboard focus to the topmost visible surface.
+ * Returns number of surfaces committed, negative on error.
+ */
 int anx_iface_compositor_repaint(void);
-
-/* Start a PIT-driven periodic compositor repaint at target_fps (≤100). */
-void anx_iface_frame_scheduler_init(uint32_t target_fps);
 
 /* ------------------------------------------------------------------ */
 /* Wayland compatibility bridge                                         */
@@ -382,23 +270,5 @@ void anx_iface_frame_scheduler_init(uint32_t target_fps);
 int anx_wayland_surface_wrap(void *pixels, uint32_t width, uint32_t height,
                               int32_t x, int32_t y,
                               struct anx_surface **out);
-
-/* Move a surface to a new screen position without unmapping it. */
-int anx_iface_surface_move(struct anx_surface *surf, int32_t x, int32_t y);
-
-/* Raise surface to front of z-order (appears on top of all others). */
-int anx_iface_surface_raise(struct anx_surface *surf);
-
-/* Lower surface to back of z-order (appears behind all others). */
-int anx_iface_surface_lower(struct anx_surface *surf);
-
-/* Set the parent of child; child is repositioned just above parent in z-order. */
-int anx_iface_surface_set_parent(struct anx_surface *child, anx_oid_t parent_oid);
-
-/* Return topmost VISIBLE surface whose bounds contain (x, y), or NULL. */
-struct anx_surface *anx_iface_surface_at(int32_t x, int32_t y);
-
-/* Set the display title for a surface (shown in menubar, switcher, etc.). */
-void anx_iface_surface_set_title(struct anx_surface *surf, const char *title);
 
 #endif /* ANX_INTERFACE_PLANE_H */

@@ -30,44 +30,8 @@ int test_engine_lifecycle(void);
 int test_resource_lease(void);
 int test_model_server(void);
 int test_posix(void);
-int test_tensor(void);
-int test_tensor_codec(void);
-int test_model(void);
-int test_tensor_ops(void);
-int test_crypto(void);
-int test_sshd_crypto(void);
-int test_input_routing(void);
-int test_compositor_cell(void);
-int test_shm_ipc(void);
-int test_conformance_harness(void);
-int test_userspace_prereqs(void);
 int test_rlm(void);
-int test_external_call(void);
-int test_disk_store(void);
-int test_route_planner(void);
-int test_vm_object(void);
-int test_workflow(void);
-int test_theme(void);
-int test_event_qos(void);
-int test_compositor_dirty_rect(void);
-int test_multi_surface(void);
-int test_clipboard(void);
-int test_text_shaping(void);
-int test_transfer_policy(void);
-int test_diag(void);
-int test_isolation(void);
-int test_a11y(void);
-int test_media(void);
-int test_conformance_gate(void);
-int test_ibal(void);
-int test_ebm(void);
-int test_kickstart(void);
-int test_anxml(void);
-int test_audio(void);
-int test_video(void);
-int test_hda(void);
-int test_amacs(void);
-int test_uor(void);
+int test_tensor(void);
 
 static struct test_case tests[] = {
 	{ "state_object",	test_state_object },
@@ -82,44 +46,8 @@ static struct test_case tests[] = {
 	{ "resource_lease",	test_resource_lease },
 	{ "model_server",	test_model_server },
 	{ "posix",		test_posix },
-	{ "tensor",		test_tensor },
-	{ "tensor_codec",	test_tensor_codec },
-	{ "model",		test_model },
-	{ "tensor_ops",		test_tensor_ops },
-	{ "crypto",		test_crypto },
-	{ "sshd_crypto",	test_sshd_crypto },
-	{ "input_routing",	test_input_routing },
-	{ "compositor_cell",	test_compositor_cell },
-	{ "shm_ipc",		test_shm_ipc },
-	{ "conformance_harness", test_conformance_harness },
-	{ "userspace_prereqs", test_userspace_prereqs },
 	{ "rlm",		test_rlm },
-	{ "external_call",	test_external_call },
-	{ "disk_store",		test_disk_store },
-	{ "route_planner",	test_route_planner },
-	{ "vm_object",		test_vm_object },
-	{ "workflow",		test_workflow },
-	{ "theme",		test_theme },
-	{ "event_qos",		test_event_qos },
-	{ "compositor_dirty_rect", test_compositor_dirty_rect },
-	{ "multi_surface",	test_multi_surface },
-	{ "clipboard",		test_clipboard },
-	{ "text_shaping",	test_text_shaping },
-	{ "transfer_policy",	test_transfer_policy },
-	{ "diag",		test_diag },
-	{ "isolation",		test_isolation },
-	{ "a11y",		test_a11y },
-	{ "media",		test_media },
-	{ "conformance_gate",	test_conformance_gate },
-	{ "ibal",		test_ibal },
-	{ "ebm",		test_ebm },
-	{ "kickstart",		test_kickstart },
-	{ "anxml",		test_anxml },
-	{ "audio",		test_audio },
-	{ "video",		test_video },
-	{ "hda",		test_hda },
-	{ "amacs",		test_amacs },
-	{ "uor",		test_uor },
+	{ "tensor",		test_tensor },
 };
 
 #define NUM_TESTS (sizeof(tests) / sizeof(tests[0]))

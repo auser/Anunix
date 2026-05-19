@@ -1,6 +1,6 @@
 ---
 name: anunix-exec
-description: Execute a command on a running Anunix VM on Jekyll via the HTTP API. Use when you need to run ansh commands, create tensors, inspect objects, or interact with Anunix programmatically.
+description: Execute a command on a running Anunix VM via the HTTP API. Use when you need to run ansh commands, create tensors, inspect objects, or interact with Anunix programmatically.
 argument-hint: <command>
 disable-model-invocation: false
 allowed-tools: Bash(ssh *) Bash(curl *)
@@ -9,8 +9,7 @@ when_to_use: run anunix command, execute on vm, tensor operation, model operatio
 
 # Execute Command on Anunix VM
 
-Send a command to a running Anunix instance on Jekyll via the HTTP API.
-The QEMU VM runs on Jekyll (x86_64 test target).
+Send a command to a running Anunix instance via the HTTP API.
 
 ## Arguments
 
@@ -18,7 +17,7 @@ The QEMU VM runs on Jekyll (x86_64 test target).
 
 ## Steps
 
-1. Execute via HTTP API — routed through Jekyll directly:
+1. Execute via HTTP API on Jekyll:
    ```bash
    ssh jekyll "curl -s -X POST http://localhost:18080/api/v1/exec \
      -H 'Content-Type: application/json' \
@@ -65,6 +64,7 @@ The QEMU VM runs on Jekyll (x86_64 test target).
 
 ## Chaining Commands
 
+To run multiple commands, make multiple `/anunix-exec` calls or use the HTTP API directly:
 ```bash
 for cmd in "tensor create default:/a 4,4 int8" "tensor fill default:/a ones" "tensor stats default:/a"; do
   ssh jekyll "curl -s -X POST http://localhost:18080/api/v1/exec \

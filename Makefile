@@ -5,7 +5,6 @@
 #   make kernel ARCH=arm64
 #   make kernel ARCH=x86_64
 #   make qemu              Boot kernel in QEMU (headless, serial console)
-#   make qemu-iso          Boot ISO in QEMU via UEFI — same path as bare metal/USB
 #   make qemu-deps         Build QEMU and dependencies from source
 #   make clean             Remove all build artifacts
 #   make test              Run kernel unit tests (host-native)
@@ -31,7 +30,7 @@ else
 endif
 
 ARCH ?= $(HOST_ARCH)
-ANX_VERSION := 2026.5.8
+ANX_VERSION := 2026.4.17
 
 # --- Toolchain ---
 # Apple's Xcode/CLT clang supports both targets but lacks ld.lld and
@@ -52,35 +51,23 @@ else
 endif
 
 LOCAL_QEMU := tools/qemu/bin
-QEMU_PORT  ?= 10080
-OVMF_FD    := $(firstword $(wildcard \
-    /usr/share/edk2/x64/OVMF.4m.fd \
-    /usr/share/OVMF/OVMF.fd \
-    /usr/share/ovmf/OVMF.fd \
-    /usr/share/qemu/OVMF.fd))
 
 ifeq ($(ARCH),arm64)
   TARGET  := aarch64-none-elf
-  ifneq ($(shell test -x $(LOCAL_QEMU)/qemu-system-aarch64 && echo yes),)
+  ifneq ($(wildcard $(LOCAL_QEMU)/qemu-system-aarch64),)
     QEMU  := $(LOCAL_QEMU)/qemu-system-aarch64
   else
     QEMU  := qemu-system-aarch64
   endif
-  QFLAGS  := -M virt -cpu cortex-a72 -m 512M -nographic -serial mon:stdio \
-             -netdev user,id=net0,hostfwd=tcp::$(QEMU_PORT)-:$(QEMU_PORT) \
-             -device virtio-net-device,netdev=net0 \
-             -kernel
+  QFLAGS  := -M virt -cpu cortex-a72 -m 512M -nographic -serial mon:stdio -kernel
 else ifeq ($(ARCH),x86_64)
   TARGET  := x86_64-none-elf
-  ifneq ($(shell test -x $(LOCAL_QEMU)/qemu-system-x86_64 && echo yes),)
+  ifneq ($(wildcard $(LOCAL_QEMU)/qemu-system-x86_64),)
     QEMU  := $(LOCAL_QEMU)/qemu-system-x86_64
   else
     QEMU  := qemu-system-x86_64
   endif
-  QFLAGS  := -m 512M -nographic -no-reboot -serial mon:stdio \
-             -netdev user,id=net0,hostfwd=tcp::$(QEMU_PORT)-:$(QEMU_PORT) \
-             -device virtio-net-pci,netdev=net0 \
-             -kernel
+  QFLAGS  := -m 512M -nographic -no-reboot -serial mon:stdio -kernel
 else ifeq ($(ARCH),heteris)
   # Heteris: RV64IM cross-compilation using xPack riscv-none-elf-gcc
   # Install toolchain: download xPack to tools/ or set RISCV_PREFIX
@@ -135,7 +122,7 @@ LINK_LD     := $(ARCH_DIR)/link.ld
 ARCH_C    := $(wildcard $(ARCH_DIR)/*.c)
 ARCH_S    := $(filter-out %/qemu_boot.S, $(wildcard $(ARCH_DIR)/*.S))
 CORE_C    := $(shell find $(CORE_DIR) -name '*.c' 2>/dev/null)
-LIB_C     := $(shell find $(LIB_DIR) -name '*.c' 2>/dev/null)
+LIB_C     := $(wildcard $(LIB_DIR)/*.c)
 DRIVER_C  := $(shell find $(DRIVER_DIR) -name '*.c' 2>/dev/null)
 DRIVER_S  := $(shell find $(DRIVER_DIR) -name '*.S' 2>/dev/null)
 
@@ -153,7 +140,7 @@ KERNEL_ELF := $(BUILD_DIR)/anunix.elf
 KERNEL_BIN := $(BUILD_DIR)/anunix.bin
 
 # --- Targets ---
-.PHONY: kernel qemu qemu-fb qemu-iso qemu-deps clean test toolchain toolchain-check iso iso-deps dist proto-install proto-test
+.PHONY: kernel qemu qemu-fb qemu-deps clean test toolchain toolchain-check iso iso-deps dist proto-install proto-test
 
 kernel: $(KERNEL_BIN)
 	@echo "  BUILT   $(KERNEL_BIN) [$(ARCH)]"
@@ -176,56 +163,15 @@ $(BUILD_DIR)/arch/%.o: $(ARCH_DIR)/%.S
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
-# JEPA uses float for ML inference; omit -mgeneral-regs-only so the compiler
-# uses hardware FP instead of soft-float library calls.  JEPA must never
-# run in interrupt context (no FPU state save/restore at interrupt entry).
-# -fno-vectorize -fno-slp-vectorize: QEMU 10.x enforces NEON d-register
-# alignment even when SCTLR_EL1.A=0; clang's SLP vectorizer combines adjacent
-# float/uint32 struct fields into 8-byte NEON pairs at 4-byte-aligned addresses,
-# causing EC=0x25 faults.  Both loop and SLP vectorizers must be disabled.
-# These are control-plane paths, not hot loops, so there is no performance cost.
-JEPA_CFLAGS := $(filter-out -mgeneral-regs-only,$(CFLAGS)) -fno-vectorize -fno-slp-vectorize
-
-$(BUILD_DIR)/core/jepa/%.o: $(CORE_DIR)/jepa/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(JEPA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/core/loop/%.o: $(CORE_DIR)/loop/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(JEPA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/core/rlm/%.o: $(CORE_DIR)/rlm/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(JEPA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/core/ebm/%.o: $(CORE_DIR)/ebm/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(JEPA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/core/exec/jepa_cell.o: $(CORE_DIR)/exec/jepa_cell.c
-	@mkdir -p $(dir $@)
-	$(CC) $(JEPA_CFLAGS) -c $< -o $@
-
 # Compile C files from core/ (recursive)
 $(BUILD_DIR)/core/%.o: $(CORE_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Compile C files from lib/ (recursive, handles subdirs like crypto/)
+# Compile C files from lib/
 $(BUILD_DIR)/lib/%.o: $(LIB_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-# browser/js and browser/fetch use double (NaN-boxing) — drop -mgeneral-regs-only
-CFLAGS_FP := $(filter-out -mgeneral-regs-only,$(CFLAGS))
-
-$(BUILD_DIR)/drivers/browser/js/%.o: $(DRIVER_DIR)/browser/js/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS_FP) -c $< -o $@
-
-$(BUILD_DIR)/drivers/browser/fetch/%.o: $(DRIVER_DIR)/browser/fetch/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS_FP) -c $< -o $@
 
 # Compile C files from drivers/ (recursive)
 $(BUILD_DIR)/drivers/%.o: $(DRIVER_DIR)/%.c
@@ -261,53 +207,15 @@ qemu: $(QEMU_KERNEL)
 
 # QEMU with framebuffer display (serial on stdio + graphical window)
 ifeq ($(ARCH),arm64)
-  QFLAGS_FB := -M virt -cpu cortex-a72 -m 512M -serial mon:stdio -device ramfb \
-               -kernel
+  QFLAGS_FB := -M virt -cpu cortex-a72 -m 512M -serial mon:stdio -device ramfb -kernel
 else ifeq ($(ARCH),x86_64)
-  QFLAGS_FB := -m 512M -serial mon:stdio -no-reboot -vga std \
-               -kernel
+  QFLAGS_FB := -m 512M -serial mon:stdio -no-reboot -vga std -kernel
 else
   QFLAGS_FB := $(QFLAGS)
 endif
 
-# qemu-fb-net: same as qemu-fb but with SLIRP user networking (requires QEMU built with libslirp).
-# Used on Jekyll and Linux hosts. For local display testing on macOS use qemu-fb.
-ifeq ($(ARCH),arm64)
-  QFLAGS_FB_NET := -M virt -cpu cortex-a72 -m 512M -serial mon:stdio -device ramfb \
-                   -netdev user,id=net0,hostfwd=tcp::$(QEMU_PORT)-:$(QEMU_PORT) \
-                   -device virtio-net-device,netdev=net0 \
-                   -kernel
-else ifeq ($(ARCH),x86_64)
-  QFLAGS_FB_NET := -m 512M -serial mon:stdio -no-reboot -vga std \
-                   -netdev user,id=net0,hostfwd=tcp::$(QEMU_PORT)-:$(QEMU_PORT) \
-                   -device virtio-net-pci,netdev=net0 \
-                   -kernel
-else
-  QFLAGS_FB_NET := $(QFLAGS_FB)
-endif
-
 qemu-fb: $(QEMU_KERNEL)
 	$(QEMU) $(QFLAGS_FB) $(QEMU_KERNEL)
-
-qemu-fb-net: $(QEMU_KERNEL)
-	$(QEMU) $(QFLAGS_FB_NET) $(QEMU_KERNEL)
-
-# Boot the ISO in QEMU via UEFI — identical boot path to bare metal and USB stick.
-# Requires OVMF firmware (edk2-ovmf on Arch, ovmf on Debian/Ubuntu).
-qemu-iso: iso
-ifeq ($(ARCH),x86_64)
-	@[ -n "$(OVMF_FD)" ] || (echo "ERROR: OVMF not found — install edk2-ovmf (Arch) or ovmf (Debian/Ubuntu)" && exit 1)
-	$(QEMU) -machine q35 -m 2G -no-reboot \
-	    -bios $(OVMF_FD) \
-	    -cdrom build/anunix-x86_64.iso -boot d \
-	    -device virtio-vga -display vnc=:1 \
-	    -serial mon:stdio \
-	    -netdev user,id=net0,hostfwd=tcp::$(QEMU_PORT)-:$(QEMU_PORT) \
-	    -device virtio-net-pci,netdev=net0
-else
-	@echo "qemu-iso is only supported for ARCH=x86_64" && exit 1
-endif
-
 
 # Build QEMU and dependencies from source into tools/qemu/
 qemu-deps:
@@ -392,24 +300,20 @@ clean:
 # Host-native test build — uses system clang without freestanding/cross flags.
 # Excludes kernel/core/main.c (test_main.c provides kernel_main).
 TEST_CC     := clang
-TEST_CFLAGS := -std=c11 -Wall -Wextra -Werror -g -O0 -I kernel/include -DANX_HOST_TEST=1
+TEST_CFLAGS := -std=c11 -Wall -Wextra -Werror -g -O0 -I kernel/include \
+               -DANX_HAVE_FLOAT
 TEST_CORE   := $(filter-out $(CORE_DIR)/main.c, \
-		  $(filter-out $(CORE_DIR)/agent/%, \
-		  $(filter-out $(CORE_DIR)/tools/wifi.c, $(CORE_C))))
+		  $(filter-out $(CORE_DIR)/agent/%, $(CORE_C)))
 # Exclude hardware-dependent drivers from host-native test builds.
 # PCI, virtio, and net drivers use I/O ports and DMA — not testable on host.
 # Exclude hardware-dependent drivers from host-native test builds.
 # fb/*.c included (tests need it) except gui.c (needs kernel GUI subsystem).
 DRIVER_C_ALL := $(shell find $(DRIVER_DIR) -name '*.c' \
 		  ! -path '*/pci/*' ! -path '*/virtio/*' ! -path '*/net/*' \
-		  ! -path '*/acpi/*' ! -path '*/accel/*' ! -path '*/storage/*' \
-		  ! -path '*/browser/*' ! -path '*/audio/*' \
-		  ! -name 'gui.c' ! -name 'splash_img.S' \
-		  ! -name 'driver_table.c' \
+		  ! -path '*/acpi/*' ! -name 'gui.c' ! -name 'splash_img.S' \
 		  2>/dev/null)
 TEST_SRCS   := tests/harness/test_main.c \
                tests/harness/mock_arch.c \
-               tests/harness/mock_wifi.c \
                tests/test_state_object.c \
                tests/test_cell_lifecycle.c \
                tests/test_cell_runtime.c \
@@ -422,44 +326,8 @@ TEST_SRCS   := tests/harness/test_main.c \
                tests/test_resource_lease.c \
                tests/test_model_server.c \
                tests/test_posix.c \
-               tests/test_tensor.c \
-               tests/test_model.c \
-               tests/test_tensor_ops.c \
-               tests/test_crypto.c \
-               tests/test_sshd_crypto.c \
-               tests/test_input_routing.c \
-               tests/test_compositor_cell.c \
-               tests/test_shm_ipc.c \
-               tests/test_conformance_harness.c \
-               tests/test_userspace_prereqs.c \
                tests/test_rlm.c \
-               tests/test_external_call.c \
-               tests/test_disk_store.c \
-               tests/test_route_planner.c \
-               tests/test_vm_object.c \
-               tests/test_workflow.c \
-               tests/test_theme.c \
-               tests/test_event_qos.c \
-               tests/test_compositor_dirty_rect.c \
-               tests/test_multi_surface.c \
-               tests/test_clipboard.c \
-               tests/test_text_shaping.c \
-               tests/test_transfer_policy.c \
-               tests/test_diag.c \
-               tests/test_isolation.c \
-               tests/test_a11y.c \
-               tests/test_media.c \
-               tests/test_conformance_gate.c \
-               tests/test_ibal.c \
-               tests/test_ebm.c \
-               tests/test_kickstart.c \
-               tests/test_anxml.c \
-               tests/test_audio.c \
-               tests/test_video.c \
-               tests/test_hda.c \
-               tests/test_amacs.c \
-               tests/test_uor.c \
-               tests/test_diag_inline.c
+               tests/test_tensor.c
 TEST_BIN    := build/test/anunix_test
 
 test:
@@ -468,11 +336,6 @@ test:
 	$(TEST_CC) $(TEST_CFLAGS) $(TEST_SRCS) $(TEST_CORE) $(DRIVER_C_ALL) $(LIB_C) -o $(TEST_BIN)
 	@echo "  Running tests..."
 	@$(TEST_BIN)
-
-conformance:
-	@echo "  Running deterministic conformance harness..."
-	@mkdir -p build/conformance
-	@python3 tools/conformance_harness.py --out-dir build/conformance
 
 # --- Python prototype (legacy) ---
 proto-install:

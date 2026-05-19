@@ -158,9 +158,3 @@ void anx_fbcon_clear(void)
 	cur_x = 0;
 	cur_y = 0;
 }
-
-void anx_fbcon_disable(void)
-{
-	fbcon_ready = false;
-	anx_fb_clear(0x00000000);	/* black — WM will paint over */
-}

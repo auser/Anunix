@@ -15,16 +15,7 @@
  */
 
 .set MAGIC,	0x1BADB002
-/*
- * FLAGS bits:
- *   bit 0 (0x1) — align modules on 4 KiB pages
- *   bit 1 (0x2) — provide memory map
- *
- * Bit 2 (framebuffer request) is intentionally omitted: some QEMU builds
- * reject it and abort. The kernel detects the Bochs VBE framebuffer directly
- * via I/O port probing (fb_detect_bochs) which works with -vga std.
- */
-.set FLAGS,	0x00000003
+.set FLAGS,	0x00000007	/* align modules + meminfo + video mode */
 .set CHECKSUM,	-(MAGIC + FLAGS)
 
 /* --- Multiboot header (must be in first 8 KiB) --- */
@@ -33,17 +24,17 @@
 	.long MAGIC
 	.long FLAGS
 	.long CHECKSUM
-	/* Address fields (unused — ELF headers used instead; required before video fields) */
+	/* Address fields (unused — ELF headers used instead) */
 	.long 0			/* header_addr */
 	.long 0			/* load_addr */
 	.long 0			/* load_end_addr */
 	.long 0			/* bss_end_addr */
 	.long 0			/* entry_addr */
-	/* Video mode fields (FLAGS bit 2) — 0 = any linear-framebuffer mode */
-	.long 0			/* mode_type: 0 = linear graphics */
-	.long 0			/* width:     0 = no preference */
-	.long 0			/* height:    0 = no preference */
-	.long 0			/* depth:     0 = no preference */
+	/* Video mode request: linear framebuffer, 1024x768x32 */
+	.long 0			/* mode_type = 0 (linear graphics) */
+	.long 1024		/* width */
+	.long 768		/* height */
+	.long 32		/* depth (bits per pixel) */
 
 /* --- 32-bit entry point --- */
 .section .text
@@ -83,76 +74,44 @@
 	popl	%eax
 .endm
 
-/*
- * Minimal UART init + single-byte debug output.
- * Called in 32-bit protected mode before any stack or paging.
- * Uses only AL and DX; clobbers nothing else.
- */
-.macro UART_INIT_AND_SEND byte
-	/* Init COM1 at 115200 8N1 */
-	movw	$0x3F9, %dx; xorb %al, %al; outb %al, %dx	/* IER=0 */
-	movw	$0x3FB, %dx; movb $0x80, %al; outb %al, %dx	/* DLAB=1 */
-	movw	$0x3F8, %dx; movb $0x01, %al; outb %al, %dx	/* DLL=1 */
-	movw	$0x3F9, %dx; xorb %al, %al; outb %al, %dx	/* DLH=0 */
-	movw	$0x3FB, %dx; movb $0x03, %al; outb %al, %dx	/* 8N1 */
-	/* Wait for transmit-hold-register empty (LSR bit 5) */
-1:	movw	$0x3FD, %dx; inb %dx, %al; testb $0x20, %al; jz 1b
-	movw	$0x3F8, %dx; movb $(\byte), %al; outb %al, %dx
-.endm
-
-.macro UART_SEND byte
-	/* Wait for THR empty */
-1:	movw	$0x3FD, %dx; inb %dx, %al; testb $0x20, %al; jz 1b
-	movw	$0x3F8, %dx; movb $(\byte), %al; outb %al, %dx
-.endm
-
-/*
- * Hardcoded physical addresses for page tables and stack.
- * These live at 0x090000–0x096000, below the kernel copy range
- * (0x100000+). No .bss section is used — that would generate a
- * PT_LOAD segment which QEMU's multiboot scanner would read first
- * (filesz=0, magic not found) causing silent fall-through to SeaBIOS.
- */
-#define BOOT_PML4      0x090000
-#define BOOT_PDPT      0x091000
-#define BOOT_STACK_TOP 0x096000
-
 _start:
 	cli
-	movl	%ebx, %esi		/* save multiboot info pointer */
+	movl	%ebx, %esi		/* save multiboot info */
 
-	movl	$BOOT_STACK_TOP, %esp
+	/* Debug: red bar = wrapper entry */
+	FB_DEBUG 0x00FF0000, 0
 
-	UART_INIT_AND_SEND '1'		/* checkpoint: 32-bit entry reached */
+/* Temporary stack in BSS */
+	movl	$(boot_stack_top), %esp
 
-	UART_SEND '2'
-
-	/* Zero page tables: PML4 + PDPT = 2 × 4 KiB */
-	movl	$BOOT_PML4, %edi
+	/* Zero page tables (2 pages = 8 KiB) */
+	movl	$boot_pml4, %edi
 	xorl	%eax, %eax
 	movl	$(2 * 4096 / 4), %ecx
 	rep	stosl
 
 	/* PML4[0] -> PDPT */
-	movl	$(BOOT_PDPT + 0x3), BOOT_PML4
+	movl	$(boot_pdpt + 0x3), boot_pml4
 
 	/*
 	 * PDPT[0..3] -> 1 GiB identity pages (first 4 GiB).
 	 * 1 GiB pages (PS bit 7) are supported by all AMD64 CPUs.
+	 * 4 GiB covers the framebuffer which PCI maps below 4 GiB.
 	 */
-	movl	$0x83,       BOOT_PDPT + 0	/* 0x00000000–0x3FFFFFFF */
-	movl	$0,          BOOT_PDPT + 4
-	movl	$0x40000083, BOOT_PDPT + 8	/* 0x40000000–0x7FFFFFFF */
-	movl	$0,          BOOT_PDPT + 12
-	movl	$0x80000083, BOOT_PDPT + 16	/* 0x80000000–0xBFFFFFFF */
-	movl	$0,          BOOT_PDPT + 20
-	movl	$0xC0000083, BOOT_PDPT + 24	/* 0xC0000000–0xFFFFFFFF */
-	movl	$0,          BOOT_PDPT + 28
+	movl	$0x83, boot_pdpt + 0		/* 0x00000000 - 0x3FFFFFFF */
+	movl	$0, boot_pdpt + 4
+	movl	$0x40000083, boot_pdpt + 8	/* 0x40000000 - 0x7FFFFFFF */
+	movl	$0, boot_pdpt + 12
+	movl	$0x80000083, boot_pdpt + 16	/* 0x80000000 - 0xBFFFFFFF */
+	movl	$0, boot_pdpt + 20
+	movl	$0xC0000083, boot_pdpt + 24	/* 0xC0000000 - 0xFFFFFFFF */
+	movl	$0, boot_pdpt + 28
 
-	UART_SEND '3'			/* checkpoint: page tables built */
+	/* Debug: green bar = page tables built */
+	FB_DEBUG 0x0000FF00, 1
 
 	/* CR3 = PML4 */
-	movl	$BOOT_PML4, %eax
+	movl	$boot_pml4, %eax
 	movl	%eax, %cr3
 
 	/* Enable PAE */
@@ -171,7 +130,8 @@ _start:
 	orl	$(1 << 31), %eax
 	movl	%eax, %cr0
 
-	UART_SEND '4'			/* checkpoint: paging enabled */
+	/* Debug: blue bar = long mode enabled */
+	FB_DEBUG 0x000000FF, 2
 
 /* Jump to 64-bit mode via GDT */
 	lgdt	boot_gdt_ptr
@@ -189,6 +149,19 @@ boot_gdt_end:
 boot_gdt_ptr:
 	.word	boot_gdt_end - boot_gdt - 1
 	.long	boot_gdt
+
+/* --- Page tables (BSS) --- */
+.section .bss
+.align 4096
+boot_pml4:
+	.space 4096
+boot_pdpt:
+	.space 4096
+
+.align 16
+boot_stack:
+	.space 16384
+boot_stack_top:
 
 /* --- Embedded 64-bit kernel binary --- */
 .section .kernel, "a"
@@ -228,61 +201,54 @@ trampoline:
 	 *   0x1020: cmdline pointer (u64, zero-extended from u32)
 	 */
 	movq	%rsi, %rbx		/* multiboot info pointer */
-
-	/* UART checkpoint: 64-bit trampoline entry */
-	movw	$0x3FD, %dx
-.Lwait5: inb %dx, %al; testb $0x20, %al; jz .Lwait5
-	movw	$0x3F8, %dx; movb $'5', %al; outb %al, %dx
-
-	/*
-	 * Read multiboot info fields into registers FIRST, before we
-	 * write our boot info block at 0x1000 (which might alias the
-	 * multiboot info structure if QEMU placed it at 0x1000).
-	 */
-	movl	(%rbx), %r8d		/* r8d = multiboot flags */
-	xorq	%r9, %r9		/* r9 = framebuffer_addr (0 = none) */
-	xorl	%r10d, %r10d		/* r10d = pitch */
-	xorl	%r11d, %r11d		/* r11d = width */
-	xorl	%r14d, %r14d		/* r14d = height (0 = unknown) */
-
-	testl	$(1 << 12), %r8d	/* framebuffer field present? */
-	jz	.Lno_fb
-	movq	88(%rbx), %r9		/* framebuffer_addr */
-	movl	96(%rbx), %r10d		/* pitch */
-	movl	100(%rbx), %r11d	/* width */
-	movl	104(%rbx), %r14d	/* height */
-	movzbl	108(%rbx), %eax		/* bpp */
-	movl	%eax, %r12d		/* save bpp */
-	movzbl	109(%rbx), %eax		/* type */
-	movl	%eax, %r13d		/* save type */
-	jmp	.Lhave_fb
-.Lno_fb:
-	xorl	%r12d, %r12d
-	xorl	%r13d, %r13d
-.Lhave_fb:
-
-	/* Read cmdline pointer before overwriting 0x1000 */
-	xorq	%rcx, %rcx
-	testl	$(1 << 2), %r8d
-	jz	.Lno_cmdline_r
-	movl	16(%rbx), %ecx		/* cmdline (u32, zero-extend to r/rcx) */
-.Lno_cmdline_r:
-
-	/* Now safe to write boot info block at 0x1000 */
 	movl	$0x414E5846, 0x1000	/* magic "ANXF" */
-	movl	%r8d, 0x1004		/* flags */
-	movq	%r9, 0x1008		/* framebuffer_addr */
-	movl	%r10d, 0x1010		/* pitch */
-	movl	%r11d, 0x1014		/* width */
-	movl	%r14d, 0x1018		/* height */
-	movb	%r12b, 0x101C		/* bpp */
-	movb	%r13b, 0x101D		/* type */
-	movq	%rcx, 0x1020		/* cmdline pointer */
 
-	/* UART checkpoint: about to copy kernel */
-	movw	$0x3FD, %dx
-.Lwait6: inb %dx, %al; testb $0x20, %al; jz .Lwait6
-	movw	$0x3F8, %dx; movb $'6', %al; outb %al, %dx
+	/* Copy flags field (offset 0 in multiboot info) */
+	movl	(%rbx), %eax
+	movl	%eax, 0x1004
+
+	/* Check if framebuffer info present (flags bit 12) */
+	testl	$(1 << 12), %eax
+	jz	.Lno_fb
+
+	/* Copy framebuffer fields */
+	movq	88(%rbx), %rax		/* framebuffer_addr */
+	movq	%rax, 0x1008
+	movl	96(%rbx), %eax		/* framebuffer_pitch */
+	movl	%eax, 0x1010
+	movl	100(%rbx), %eax		/* framebuffer_width */
+	movl	%eax, 0x1014
+	movl	104(%rbx), %eax		/* framebuffer_height */
+	movl	%eax, 0x1018
+	movb	108(%rbx), %al		/* framebuffer_bpp */
+	movb	%al, 0x101C
+	movb	109(%rbx), %al		/* framebuffer_type */
+	movb	%al, 0x101D
+
+.Lno_fb:
+	/* Save cmdline pointer (offset 16, valid when flags bit 2 set) */
+	movl	(%rbx), %eax		/* flags */
+	testl	$(1 << 2), %eax
+	jz	.Lno_cmdline
+	movl	16(%rbx), %eax		/* cmdline (u32 phys addr) */
+	movq	%rax, 0x1020		/* zero-extend to u64 */
+.Lno_cmdline:
+
+	/* Debug: yellow bar = 64-bit trampoline reached */
+	movq	0x1008, %rdi		/* framebuffer addr from saved info */
+	testq	%rdi, %rdi
+	jz	.Lno_dbg_d
+	movl	96(%rbx), %eax		/* pitch */
+	imull	$30, %eax		/* row 3 * 10 rows */
+	addq	%rax, %rdi
+	movl	$2000, %ecx		/* 200 pixels * 10 rows */
+	movl	$0x00FFFF00, %eax	/* yellow */
+.Lfill_d:
+	movl	%eax, (%rdi)
+	addq	$4, %rdi
+	decl	%ecx
+	jnz	.Lfill_d
+.Lno_dbg_d:
 
 	/* Copy kernel from kernel_payload to 0x100000 */
 	movq	$kernel_payload, %rsi
@@ -292,10 +258,21 @@ trampoline:
 	addq	$1, %rcx		/* round up */
 	rep	movsq
 
-	/* UART checkpoint: kernel copied, about to jump */
-	movw	$0x3FD, %dx
-.Lwait7: inb %dx, %al; testb $0x20, %al; jz .Lwait7
-	movw	$0x3F8, %dx; movb $'7', %al; outb %al, %dx
+	/* Debug: cyan bar = kernel copied */
+	movq	0x1008, %rdi
+	testq	%rdi, %rdi
+	jz	.Lno_dbg_e
+	movl	96(%rbx), %eax
+	imull	$40, %eax
+	addq	%rax, %rdi
+	movl	$2000, %ecx
+	movl	$0x0000FFFF, %eax	/* cyan */
+.Lfill_e:
+	movl	%eax, (%rdi)
+	addq	$4, %rdi
+	decl	%ecx
+	jnz	.Lfill_e
+.Lno_dbg_e:
 
 /* Jump to kernel entry at 0x100000 */
 	movq	$0x100000, %rax

@@ -16,20 +16,15 @@
 #include <anx/jpeg.h>
 #include <anx/virtio_net.h>
 #include <anx/net.h>
-#include <anx/e1000.h>
-#include <anx/xdna.h>
 #include <anx/http.h>
 #include <anx/page.h>
 #include <anx/fb.h>
 #include <anx/hwprobe.h>
-#include <anx/driver_table.h>
-#include <anx/dt.h>
-#include <anx/mt7925.h>
 
 static uint64_t mock_time = 1000000000ULL;	/* 1 second in ns */
 
-/* 8 MiB static heap for test builds */
-#define MOCK_HEAP_SIZE	(8 * 1024 * 1024)
+/* 4 MiB static heap for test builds */
+#define MOCK_HEAP_SIZE	(4 * 1024 * 1024)
 static uint8_t mock_heap[MOCK_HEAP_SIZE]
 	__attribute__((aligned(4096)));
 
@@ -111,11 +106,6 @@ uint64_t arch_timer_ticks(void)
 	return 0;
 }
 
-void arch_set_timer_callback(void (*fn)(void))
-{
-	(void)fn; /* no-op in test harness */
-}
-
 void arch_probe_hw(struct anx_hw_inventory *inv)
 {
 	/* Mock: 4 CPUs, 16 GiB RAM, 1 GPU */
@@ -172,10 +162,6 @@ void anx_gui_init(void) {}
 bool anx_gui_active(void) { return false; }
 void anx_gui_terminal_putc(char c) { (void)c; }
 void anx_gui_update_time(void) {}
-void anx_gui_get_time(char *buf, uint32_t buflen)
-{ if (buf && buflen >= 6) { buf[0]='0';buf[1]='0';buf[2]=':';buf[3]='0';buf[4]='0';buf[5]='\0'; } }
-void anx_gui_get_date(char *buf, uint32_t buflen)
-{ if (buf && buflen >= 8) { buf[0]='M';buf[1]='o';buf[2]='n';buf[3]=' ';buf[4]='0';buf[5]='1';buf[6]='\0'; } }
 void anx_gui_set_tz_offset(int32_t h) { (void)h; }
 void anx_gui_draw_char_scaled(uint32_t x, uint32_t y, char c,
     uint32_t fg, uint32_t bg, uint32_t scale)
@@ -183,9 +169,6 @@ void anx_gui_draw_char_scaled(uint32_t x, uint32_t y, char c,
 void anx_gui_draw_string_scaled(uint32_t x, uint32_t y, const char *s,
     uint32_t fg, uint32_t bg, uint32_t scale)
 { (void)x;(void)y;(void)s;(void)fg;(void)bg;(void)scale; }
-void anx_gui_terminal_clear(void) {}
-void anx_gui_disable(void) {}
-int32_t anx_gui_get_tz_offset(void) { return 0; }
 
 /* Mock JPEG splash data (real jpeg.c from lib/ is compiled) */
 const uint8_t _splash_jpg_start[1] = {0};
@@ -228,10 +211,6 @@ bool anx_virtio_net_ready(void) { return false; }
 /* Mock network stack — excluded from test build */
 void anx_net_stack_init(const struct anx_net_config *c) { (void)c; }
 void anx_net_poll(void) {}
-int anx_httpd_init(uint16_t p) { (void)p; return 0; }
-void anx_httpd_poll(void) {}
-int anx_sshd_init(uint16_t p) { (void)p; return 0; }
-void anx_sshd_poll(void) {}
 void anx_eth_recv(const void *f, uint32_t l) { (void)f; (void)l; }
 int anx_eth_send(const uint8_t d[6], uint16_t e, const void *p, uint32_t l)
 { (void)d; (void)e; (void)p; (void)l; return ANX_EIO; }
@@ -267,79 +246,12 @@ int anx_tcp_send(struct anx_tcp_conn *c, const void *d, uint32_t l)
 int anx_tcp_recv(struct anx_tcp_conn *c, void *b, uint32_t l, uint32_t t)
 { (void)c; (void)b; (void)l; (void)t; return ANX_EIO; }
 int anx_tcp_close(struct anx_tcp_conn *c) { (void)c; return ANX_OK; }
-/*
- * Mock virtio-blk: RAM-backed when test_mock_blk_init() is called,
- * otherwise reports not-ready so unrelated tests see no device.
- *
- * The RAM buffer is sized for disk_store unit tests, which need the
- * superblock + journal + index + a small data region.
- */
-#include <anx/mock_blk.h>
-
-static uint8_t *mock_blk_mem;
-static uint64_t mock_blk_sectors;
-
-void test_mock_blk_init(uint64_t sectors)
-{
-	static uint8_t mock_blk_pool[512 * 2048]; /* 1 MiB default */
-
-	if (sectors == 0 || sectors > 2048)
-		sectors = 2048;
-	mock_blk_mem = mock_blk_pool;
-	mock_blk_sectors = sectors;
-	/* zero the backing store so mount sees a fresh disk */
-	{
-		uint64_t i;
-
-		for (i = 0; i < sectors * 512; i++)
-			mock_blk_mem[i] = 0;
-	}
-}
-
-void test_mock_blk_teardown(void)
-{
-	mock_blk_mem = NULL;
-	mock_blk_sectors = 0;
-}
-
+/* Mock virtio-blk */
 int anx_virtio_blk_init(void) { return ANX_ENOENT; }
-
-int anx_blk_read(uint64_t s, uint32_t c, void *b)
-{
-	if (!mock_blk_mem)
-		return ANX_EIO;
-	if (s + c > mock_blk_sectors)
-		return ANX_EIO;
-	{
-		uint32_t i;
-		uint8_t *dst = b;
-		const uint8_t *src = mock_blk_mem + s * 512;
-
-		for (i = 0; i < c * 512; i++)
-			dst[i] = src[i];
-	}
-	return ANX_OK;
-}
-
-int anx_blk_write(uint64_t s, uint32_t c, const void *b)
-{
-	if (!mock_blk_mem)
-		return ANX_EIO;
-	if (s + c > mock_blk_sectors)
-		return ANX_EIO;
-	{
-		uint32_t i;
-		uint8_t *dst = mock_blk_mem + s * 512;
-		const uint8_t *src = b;
-
-		for (i = 0; i < c * 512; i++)
-			dst[i] = src[i];
-	}
-	return ANX_OK;
-}
-
-uint64_t anx_blk_capacity(void) { return mock_blk_sectors; }
-bool anx_blk_ready(void) { return mock_blk_mem != NULL; }
+int anx_blk_read(uint64_t s, uint32_t c, void *b) { (void)s;(void)c;(void)b; return ANX_EIO; }
+int anx_blk_write(uint64_t s, uint32_t c, const void *b) { (void)s;(void)c;(void)b; return ANX_EIO; }
+uint64_t anx_blk_capacity(void) { return 0; }
+bool anx_blk_ready(void) { return false; }
 
 int anx_http_get(const char *h, uint16_t p, const char *pa, struct anx_http_response *r)
 { (void)h; (void)p; (void)pa; r->status_code=0; r->body=NULL; r->body_len=0; return ANX_EIO; }
@@ -359,41 +271,3 @@ int anx_http_post_authed(const char *h, uint16_t p, const char *pa,
 void anx_http_response_free(struct anx_http_response *r)
 { if(r) { r->body=NULL; r->body_len=0; } }
 int anx_ntp_sync(uint32_t ip) { (void)ip; return ANX_ETIMEDOUT; }
-uint32_t anx_ntp_unix_time(void) { return 0; }
-
-/* Mock E1000 NIC — hardware excluded from test build */
-int anx_e1000_init(void) { return ANX_ENODEV; }
-bool anx_e1000_ready(void) { return false; }
-int anx_e1000_tx(const void *f, uint16_t l) { (void)f; (void)l; return ANX_EIO; }
-void anx_e1000_poll(void) {}
-const uint8_t *anx_e1000_mac(void) { static uint8_t z[6]; return z; }
-void anx_e1000_info(void) {}
-void anx_browser_poll(void) {}
-
-/* Mock XDNA NPU — hardware excluded from test build */
-int anx_xdna_init(void) { return ANX_ENODEV; }
-bool anx_xdna_present(void) { return false; }
-bool anx_xdna_ready(void) { return false; }
-int anx_xdna_load_firmware(void) { return ANX_ENODEV; }
-int anx_xdna_submit(const void *in, uint32_t in_len, void *out, uint32_t out_sz,
-		    uint32_t part, uint32_t flags)
-{ (void)in; (void)in_len; (void)out; (void)out_sz; (void)part; (void)flags;
-  return ANX_ENODEV; }
-void anx_xdna_info(void) {}
-
-/* Mock driver table — driver_table.c excluded from test build (references
- * hardware-only symbols: nvme, ahci, apple_ans).  These stubs satisfy
- * references from test_main.c / kernel_main(). */
-void anx_drivers_probe(void) {}
-bool anx_net_probe_ok(void) { return false; }
-
-/* Mock device tree — architecture init provides the real implementation;
- * mock_arch.c provides it for test builds where arch_init.c is not compiled. */
-bool anx_dt_has_compatible(const char *compatible)
-{
-	(void)compatible;
-	return false;
-}
-
-/* Mock MT7925 state — used by kernel_main() post-probe WiFi connect logic */
-anx_mt7925_state_t anx_mt7925_state(void) { return MT7925_STATE_DOWN; }

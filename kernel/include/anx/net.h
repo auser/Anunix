@@ -206,23 +206,11 @@ int anx_tcp_recv(struct anx_tcp_conn *conn, void *buf, uint32_t len,
 		  uint32_t timeout_ms);
 int anx_tcp_close(struct anx_tcp_conn *conn);
 
-/* TCP server (passive open) */
-typedef void (*anx_tcp_accept_fn)(struct anx_tcp_conn *conn, void *arg);
-int anx_tcp_listen(uint16_t port, anx_tcp_accept_fn cb, void *arg);
-void anx_tcp_unlisten(uint16_t port);
-bool anx_tcp_srv_input(const void *data, uint32_t len, uint32_t src_ip);
-int anx_tcp_srv_send(struct anx_tcp_conn *conn, const void *data,
-		      uint32_t len);
-int anx_tcp_srv_recv(struct anx_tcp_conn *conn, void *buf, uint32_t len,
-		      uint32_t timeout_ms);
-int anx_tcp_srv_close(struct anx_tcp_conn *conn);
-
 /* DHCP client */
 int anx_dhcp_discover(struct anx_net_config *cfg);
 
 /* NTP time sync */
 int anx_ntp_sync(uint32_t server_ip);
-uint32_t anx_ntp_unix_time(void);	/* last synced UNIX timestamp, 0 if never */
 
 /* Poll the network device and process any received packets */
 void anx_net_poll(void);

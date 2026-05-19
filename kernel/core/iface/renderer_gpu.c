@@ -12,11 +12,8 @@
 #include <anx/fb.h>
 #include <anx/gui.h>
 #include <anx/font.h>
-#include <anx/theme.h>
 #include <anx/string.h>
 #include <anx/types.h>
-#include <anx/wm.h>
-#include <anx/input.h>
 
 /* ------------------------------------------------------------------ */
 /* Content rendering helpers                                            */
@@ -29,64 +26,22 @@
 static void
 render_canvas(struct anx_surface *surf, struct anx_content_node *node)
 {
-	const struct anx_fb_info *fbinfo;
 	const uint32_t *src;
-	uint32_t        row;
-	uint32_t        dst_y;
-	uint32_t        r0, r1, c0, c1;
-	uint32_t        fb_x0, copy_w;
+	uint32_t        row, col;
+	uint32_t        dst_x, dst_y;
 
 	if (!node->data || node->data_len < surf->width * surf->height * 4)
 		return;
 
-	fbinfo = anx_fb_get_info();
-	if (!fbinfo || !fbinfo->available)
-		return;
-
 	src = (const uint32_t *)node->data;
 
-	/* Clip to damage rect when available; fall back to full surface. */
-	if (surf->damage_valid && surf->damage_w && surf->damage_h) {
-		int32_t dr0 = surf->damage_y;
-		int32_t dr1 = dr0 + (int32_t)surf->damage_h;
-		int32_t dc0 = surf->damage_x;
-		int32_t dc1 = dc0 + (int32_t)surf->damage_w;
-		if (dr0 < 0) dr0 = 0;
-		if (dc0 < 0) dc0 = 0;
-		if (dr1 > (int32_t)surf->height) dr1 = (int32_t)surf->height;
-		if (dc1 > (int32_t)surf->width)  dc1 = (int32_t)surf->width;
-		if (dr1 <= dr0 || dc1 <= dc0)
-			return;
-		r0 = (uint32_t)dr0;  r1 = (uint32_t)dr1;
-		c0 = (uint32_t)dc0;  c1 = (uint32_t)dc1;
-	} else {
-		r0 = 0;  r1 = surf->height;
-		c0 = 0;  c1 = surf->width;
-	}
-
-	/* Compute framebuffer x offset and clip to framebuffer width. */
-	if (surf->x < 0 || surf->y < 0)
-		return;
-	fb_x0  = (uint32_t)surf->x + c0;
-	copy_w = c1 - c0;
-	if (fb_x0 >= fbinfo->width)
-		return;
-	if (fb_x0 + copy_w > fbinfo->width)
-		copy_w = fbinfo->width - fb_x0;
-
-	/* Row-at-a-time blit using 32-bit pixel writes (avoids 64-bit MMIO issues). */
-	for (row = r0; row < r1; row++) {
-		uint32_t       *dst_row;
-		const uint32_t *src_row;
-		uint32_t        col;
-
+	for (row = 0; row < surf->height; row++) {
 		dst_y = (uint32_t)surf->y + row;
-		if (dst_y >= fbinfo->height)
-			break;
-		dst_row = anx_fb_row_ptr(dst_y) + fb_x0;
-		src_row = src + row * surf->width + c0;
-		for (col = 0; col < copy_w; col++)
-			dst_row[col] = src_row[col];
+		for (col = 0; col < surf->width; col++) {
+			dst_x = (uint32_t)surf->x + col;
+			anx_fb_putpixel(dst_x, dst_y,
+			                src[row * surf->width + col]);
+		}
 	}
 }
 
@@ -185,91 +140,7 @@ gpu_commit(struct anx_surface *surf)
 {
 	if (!anx_fb_available())
 		return ANX_EIO;
-
 	render_node(surf, surf->content_root);
-
-	/* Window decoration: gradient titlebar + traffic-light buttons.
-	 * Skipped for untitled surfaces and surfaces flush with the top. */
-	if (surf->title[0] && surf->y >= (int32_t)ANX_WM_DECOR_H) {
-		const struct anx_theme *theme = anx_theme_get();
-		anx_oid_t foc    = anx_input_focus_get();
-		bool      is_foc = (foc.hi == surf->oid.hi && foc.lo == surf->oid.lo);
-		uint32_t  tfg    = is_foc ? 0x00FFFFFFu : theme->palette.text_dim;
-		uint32_t tx  = (uint32_t)surf->x;
-		uint32_t ty  = (uint32_t)(surf->y - (int32_t)ANX_WM_DECOR_H);
-		uint32_t fy  = ty + (ANX_WM_DECOR_H - ANX_FONT_HEIGHT) / 2;
-
-		/* Traffic-light circles: 14px diameter, left side, 8px margin */
-		uint32_t dot_d  = 14;
-		uint32_t dot_r  = dot_d / 2;
-		uint32_t dot_y  = ty + (ANX_WM_DECOR_H - dot_d) / 2;
-		uint32_t dot_cl = tx + 8;		/* close (red) */
-		uint32_t dot_ml = dot_cl + dot_d + 5;	/* minimize (yellow) */
-		uint32_t dot_xl = dot_ml + dot_d + 5;	/* maximize (green) */
-
-		/* Titlebar background.
-		 * Focused: 135° three-stop diagonal navy-800 → navy-700 → teal-400.
-		 * Unfocused: flat surface with 1px top inset highlight. */
-		if (is_foc) {
-			anx_fb_fill_gradient3(tx, ty, surf->width, ANX_WM_DECOR_H,
-					      theme->palette.surface,
-					      0x001D4470u,
-					      theme->palette.border,
-					      true);
-			/* Inset top-edge highlight */
-			anx_fb_fill_rect(tx, ty, surf->width, 1, 0x002A6080u);
-		} else {
-			anx_fb_fill_rect(tx, ty, surf->width, ANX_WM_DECOR_H,
-					 theme->palette.surface);
-			/* Subtle top bevel on unfocused */
-			anx_fb_fill_rect(tx, ty, surf->width, 1, 0x001D4470u);
-		}
-
-		/* 1px bottom separator */
-		anx_fb_fill_rect(tx, ty + ANX_WM_DECOR_H - 1, surf->width, 1,
-				 is_foc ? 0x000A1E30u : theme->palette.surface);
-
-		/* Traffic-light circles — base color + top-left highlight sphere */
-		anx_fb_fill_rounded_rect(dot_cl, dot_y, dot_d, dot_d, dot_r,
-					 theme->palette.error);
-		anx_fb_fill_rounded_rect(dot_cl, dot_y, 8, 8, 4, 0x00FF8B7Au);
-
-		anx_fb_fill_rounded_rect(dot_ml, dot_y, dot_d, dot_d, dot_r,
-					 theme->palette.warning);
-		anx_fb_fill_rounded_rect(dot_ml, dot_y, 8, 8, 4, 0x00F0C65Au);
-
-		anx_fb_fill_rounded_rect(dot_xl, dot_y, dot_d, dot_d, dot_r,
-					 theme->palette.success);
-		anx_fb_fill_rounded_rect(dot_xl, dot_y, 8, 8, 4, 0x007FD08Au);
-
-		/* Title: left-aligned after traffic lights */
-		anx_gui_draw_string_scaled(dot_xl + dot_d + 8, fy,
-					   surf->title, tfg,
-					   is_foc ? 0x001D4470u
-						  : theme->palette.surface, 1);
-	}
-
-	/* Window border: 1px ring around canvas.
-	 * Focused: teal accent.  Unfocused: dim navy-700. */
-	if (surf->title[0] && surf->width && surf->height) {
-		const struct anx_theme *theme2 = anx_theme_get();
-		anx_oid_t foc2    = anx_input_focus_get();
-		bool      is_foc2 = (foc2.hi == surf->oid.hi &&
-				     foc2.lo == surf->oid.lo);
-		uint32_t  border_col = is_foc2 ? theme2->palette.accent
-					       : 0x001D4470u;
-		uint32_t  bx = (uint32_t)surf->x;
-		uint32_t  by = (uint32_t)surf->y;
-
-		/* Left + Right 1px strips */
-		anx_fb_fill_rect(bx, by, 1, surf->height, border_col);
-		anx_fb_fill_rect(bx + surf->width - 1, by,
-				 1, surf->height, border_col);
-		/* Bottom 1px strip */
-		anx_fb_fill_rect(bx, by + surf->height - 1,
-				 surf->width, 1, border_col);
-	}
-
 	return ANX_OK;
 }
 

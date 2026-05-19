@@ -88,13 +88,10 @@ void cmd_cp(int argc, char **argv)
 		return;
 	}
 
-	/* Bind to destination path and persist */
+	/* Bind to destination path */
 	ret = anx_ns_bind(dst_ns, dst_path, &new_obj->oid);
 	if (ret != ANX_OK)
 		kprintf("cp: bind failed (%d)\n", ret);
-	else
-		uobj_record(dst_ns, dst_path,
-			    new_obj->payload, new_obj->payload_size);
 
 	anx_uuid_to_string(&new_obj->oid, oid_str, sizeof(oid_str));
 	kprintf("copied -> %s (%s:%s)\n", oid_str, dst_ns, dst_path);

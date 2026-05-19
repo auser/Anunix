@@ -8,14 +8,6 @@
 #ifndef ANX_TYPES_H
 #define ANX_TYPES_H
 
-/* Integer literal suffixes for portable 64-bit constants */
-#ifndef UINT64_C
-#define UINT64_C(c)  (c ## ULL)
-#endif
-#ifndef INT64_C
-#define INT64_C(c)   (c ## LL)
-#endif
-
 /* Fixed-width integers — kernel freestanding, no libc */
 typedef unsigned char		uint8_t;
 typedef unsigned short		uint16_t;
@@ -83,10 +75,5 @@ typedef uint64_t anx_time_t;
 #define ANX_EHOSTUNREACH -11
 #define ANX_ENOTIMPL	-12   /* not yet implemented */
 #define ANX_EFULL	-13   /* store or queue is full */
-#define ANX_ENODEV	-14   /* no such device */
-#define ANX_ENOTSUP	-15   /* operation not supported */
-
-/* Kernel version string — YYYY.M.D */
-#define ANX_VERSION	"2026.5.8"
 
 #endif /* ANX_TYPES_H */

@@ -1,9 +1,9 @@
 /*
  * pci.c — PCI bus enumeration via Type 1 configuration mechanism.
  *
- * Scans all 256 buses using I/O ports 0xCF8 (address) and 0xCFC
- * (data). UEFI firmware pre-assigns bus numbers; we just walk them.
- * Discovered devices are stored in a linked list for driver lookup.
+ * Scans bus 0 (sufficient for QEMU) using I/O ports 0xCF8 (address)
+ * and 0xCFC (data). Discovered devices are stored in a linked list
+ * for lookup by drivers.
  */
 
 #include <anx/types.h>
@@ -15,7 +15,7 @@
 #define PCI_CONFIG_ADDR		0xCF8
 #define PCI_CONFIG_DATA		0xCFC
 
-#define PCI_MAX_BUS		256
+#define PCI_MAX_BUS		1	/* scan bus 0 only for now */
 #define PCI_MAX_SLOT		32
 #define PCI_MAX_FUNC		8
 
@@ -130,14 +130,13 @@ static void pci_scan_slot(uint8_t bus, uint8_t slot)
 
 int anx_pci_init(void)
 {
-	uint16_t bus;
-	uint8_t slot;
+	uint8_t bus, slot;
 	uint32_t count = 0;
 	struct anx_list_head *pos;
 
 	for (bus = 0; bus < PCI_MAX_BUS; bus++)
 		for (slot = 0; slot < PCI_MAX_SLOT; slot++)
-			pci_scan_slot((uint8_t)bus, slot);
+			pci_scan_slot(bus, slot);
 
 	ANX_LIST_FOR_EACH(pos, &pci_devices)
 		count++;

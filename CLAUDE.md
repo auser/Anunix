@@ -105,26 +105,26 @@ make toolchain-check       # Verify dependencies installed
 
 ### Development Machine
 
-- **Hyde** — x86_64 Linux, primary dev box. All builds and tests run here. Repo lives at `~/Development/Anunix/Anunix`.
+- **Adams-Mac-Studio** — M1 Mac Studio, primary dev box.
+
+### VM Testing with UTM
+
+UTM is the VM host for both architectures:
+
+| Target | UTM Backend | Performance | Use |
+|--------|-------------|-------------|-----|
+| ARM64 | Apple Virtualization.framework | Near-native | Primary development loop |
+| x86_64 | QEMU emulation | Slower | Validation before Framework hardware |
 
 ### Headless Testing with QEMU
 
-`make qemu` boots the kernel in QEMU on Hyde with serial console output. This is the primary feedback loop during development. Hyde runs QEMU natively for x86_64 and via cross-compile + emulation for ARM64.
+For quick iteration without UTM GUI, `make qemu` boots the kernel in QEMU with serial console output. This is the fastest feedback loop during development.
 
-### VM Testing with UTM (Mac, secondary)
+### Linux Validation with QEMU/libvirt (Jekyll)
 
-Mac machines can run UTM for near-native ARM64 validation before Framework hardware, but Hyde is the canonical build machine.
+Finished VM images are copied to **Jekyll** (Linux server) for testing under QEMU/libvirt. This validates the common deployment pattern — most users will run Anunix as a QEMU/libvirt guest on Linux before (or instead of) bare metal.
 
-| Target | Backend | Use |
-|--------|---------|-----|
-| x86_64 | QEMU on Hyde (native) | Primary development loop |
-| ARM64 | QEMU on Hyde (emulated) | Cross-compile validation |
-
-### Linux Validation (Jekyll, retired)
-
-Jekyll was previously used as a QEMU/libvirt test target. That role is now handled directly on Hyde.
-
-Pipeline: develop on Hyde → headless QEMU test on Hyde → real hardware.
+Pipeline: build on Mac Studio → test in UTM → copy to Jekyll → test under QEMU/libvirt on Linux.
 
 ### Real Hardware (later)
 

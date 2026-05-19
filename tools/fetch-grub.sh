@@ -20,7 +20,7 @@ BUILD_TMP="${GRUB_DIR}/build-tmp"
 NJOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Debian package versions (bookworm/stable)
-GRUB_VER="2.06-13+deb12u2"
+GRUB_VER="2.06-13+deb12u1"
 GRUB_PC_DEB="grub-pc-bin_${GRUB_VER}_amd64.deb"
 GRUB_EFI_DEB="grub-efi-amd64-bin_${GRUB_VER}_amd64.deb"
 DEBIAN_MIRROR="https://deb.debian.org/debian/pool/main/g/grub2"
@@ -56,10 +56,10 @@ echo ">>> [1/4] Downloading GRUB BIOS modules..."
 if [ ! -d "${LIB_DIR}/i386-pc" ]; then
 	cd "${BUILD_TMP}"
 	if [ ! -f "${GRUB_PC_DEB}" ]; then
-		curl -fL --progress-bar -o "${GRUB_PC_DEB}" \
+		curl -L --progress-bar -o "${GRUB_PC_DEB}" \
 			"${DEBIAN_MIRROR}/${GRUB_PC_DEB}" || {
 			echo "  Trying alternative mirror..."
-			curl -fL --progress-bar -o "${GRUB_PC_DEB}" \
+			curl -L --progress-bar -o "${GRUB_PC_DEB}" \
 				"https://ftp.debian.org/debian/pool/main/g/grub2/${GRUB_PC_DEB}"
 		}
 	fi
@@ -86,10 +86,10 @@ echo ">>> [2/4] Downloading GRUB EFI modules..."
 if [ ! -d "${LIB_DIR}/x86_64-efi" ]; then
 	cd "${BUILD_TMP}"
 	if [ ! -f "${GRUB_EFI_DEB}" ]; then
-		curl -fL --progress-bar -o "${GRUB_EFI_DEB}" \
+		curl -L --progress-bar -o "${GRUB_EFI_DEB}" \
 			"${DEBIAN_MIRROR}/${GRUB_EFI_DEB}" || {
 			echo "  Trying alternative mirror..."
-			curl -fL --progress-bar -o "${GRUB_EFI_DEB}" \
+			curl -L --progress-bar -o "${GRUB_EFI_DEB}" \
 				"https://ftp.debian.org/debian/pool/main/g/grub2/${GRUB_EFI_DEB}"
 		}
 	fi
@@ -123,29 +123,18 @@ if [ ! -f "${SHARE_DIR}/isolinux.bin" ]; then
 		--include="*/bios/com32/lib/libcom32.c32" \
 		--include="*/bios/com32/elflink/ldlinux/ldlinux.c32" \
 		--include="*/bios/com32/libutil/libutil.c32" \
-		--include="*/bios/com32/gpl/libgpl.c32" \
 		2>/dev/null || tar xf "${SYSLINUX_TAR}"
 
-	# Find and copy the needed files.  Each lookup pins -path "*/bios/*"
-	# because syslinux 6.03 ships three sibling variants (bios/efi32/efi64)
-	# and they are NOT ABI-compatible.  Mixing variants produces undefined
-	# symbols at boot — e.g. an efi32 libcom32.c32 references
-	# __vesacon_i915resolution which only exists in efi32/libgpl.c32.
+	# Find and copy the needed files
 	find "syslinux-${SYSLINUX_VER}" -name "isolinux.bin" -path "*/bios/*" | head -1 | \
 		xargs -I{} cp {} "${SHARE_DIR}/"
-	find "syslinux-${SYSLINUX_VER}" -name "mboot.c32" -path "*/bios/*" | head -1 | \
+	find "syslinux-${SYSLINUX_VER}" -name "mboot.c32" | head -1 | \
 		xargs -I{} cp {} "${SHARE_DIR}/"
 	find "syslinux-${SYSLINUX_VER}" -name "ldlinux.c32" -path "*/bios/*" | head -1 | \
 		xargs -I{} cp {} "${SHARE_DIR}/"
-	find "syslinux-${SYSLINUX_VER}" -name "libcom32.c32" -path "*/bios/*" | head -1 | \
+	find "syslinux-${SYSLINUX_VER}" -name "libcom32.c32" | head -1 | \
 		xargs -I{} cp {} "${SHARE_DIR}/"
-	find "syslinux-${SYSLINUX_VER}" -name "libutil.c32" -path "*/bios/*" | head -1 | \
-		xargs -I{} cp {} "${SHARE_DIR}/"
-	find "syslinux-${SYSLINUX_VER}" -name "libgpl.c32" -path "*/bios/*" | head -1 | \
-		xargs -I{} cp {} "${SHARE_DIR}/" 2>/dev/null || true
-	# isohdpfx.bin — 432-byte MBR boot stub used by xorriso's
-	# -isohybrid-mbr flag.  Required for legacy BIOS USB boot.
-	find "syslinux-${SYSLINUX_VER}" -path '*/bios/mbr/isohdpfx.bin' | head -1 | \
+	find "syslinux-${SYSLINUX_VER}" -name "libutil.c32" | head -1 | \
 		xargs -I{} cp {} "${SHARE_DIR}/"
 
 	rm -rf "syslinux-${SYSLINUX_VER}"

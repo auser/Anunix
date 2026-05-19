@@ -11,22 +11,13 @@
 
 #include <anx/types.h>
 
-/* Read a high-resolution cycle counter */
+/* Read the TSC (Time Stamp Counter) — sub-nanosecond on modern CPUs */
 static inline uint64_t anx_rdtsc(void)
 {
-#ifdef __x86_64__
 	uint32_t lo, hi;
 
 	__asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
 	return ((uint64_t)hi << 32) | lo;
-#elif defined(__aarch64__)
-	uint64_t val;
-
-	__asm__ volatile("mrs %0, cntvct_el0" : "=r"(val));
-	return val;
-#else
-	return 0;
-#endif
 }
 
 /* Boot-time profiling slots */

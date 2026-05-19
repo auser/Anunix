@@ -43,7 +43,6 @@ struct ntp_packet {
 
 static volatile bool ntp_got_reply;
 static uint32_t ntp_timestamp;
-static uint32_t ntp_unix_synced;	/* last synced UNIX timestamp */
 
 static void ntp_recv_cb(const void *data, uint32_t len,
 			 uint32_t src_ip, uint16_t src_port, void *arg)
@@ -98,7 +97,6 @@ int anx_ntp_sync(uint32_t server_ip)
 		uint32_t mins = (unix_ts / 60) % 60;
 		uint32_t hrs  = (unix_ts / 3600) % 24;
 
-		ntp_unix_synced = unix_ts;
 		kprintf("ntp: %u:%u:%u UTC (unix %u)\n",
 			hrs, mins, secs, unix_ts);
 
@@ -130,9 +128,4 @@ int anx_ntp_sync(uint32_t server_ip)
 	}
 
 	return ANX_OK;
-}
-
-uint32_t anx_ntp_unix_time(void)
-{
-	return ntp_unix_synced;
 }

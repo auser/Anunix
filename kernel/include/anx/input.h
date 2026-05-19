@@ -148,19 +148,6 @@ anx_oid_t anx_input_focus_get(void);
  *   unicode  — resolved character (0 if non-printable) */
 void anx_input_ps2_key(uint8_t scancode, uint32_t unicode);
 
-/* Input telemetry for deterministic routing tests and diagnostics. */
-struct anx_input_stats {
-	uint64_t delivered;
-	uint64_t dropped_no_focus;
-	uint64_t last_timestamp_ns;
-};
-
-void anx_input_stats_get(struct anx_input_stats *out);
-void anx_input_stats_reset(void);
-
-/* Return the current modifier bitmask (ANX_MOD_* flags). */
-uint32_t anx_input_get_modifiers(void);
-
 /* Generic key event injection (USB HID, synthetic) */
 void anx_input_key_down(uint32_t hid_key, uint32_t modifiers, uint32_t unicode);
 void anx_input_key_up(uint32_t hid_key, uint32_t modifiers);
@@ -169,7 +156,5 @@ void anx_input_key_up(uint32_t hid_key, uint32_t modifiers);
 void anx_input_pointer_move(int32_t x, int32_t y, uint32_t buttons);
 void anx_input_pointer_button(int32_t x, int32_t y,
                                uint32_t buttons, uint32_t modifiers);
-/* delta > 0 = scroll up, delta < 0 = scroll down */
-void anx_input_pointer_scroll(int32_t x, int32_t y, int32_t delta);
 
 #endif /* ANX_INPUT_H */

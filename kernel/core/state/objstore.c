@@ -12,9 +12,10 @@
 #include <anx/uuid.h>
 #include <anx/hashtable.h>
 #include <anx/arch.h>
-#include <anx/crypto.h>
-#include <anx/uor.h>
+#include <anx/kprintf.h>
 
+/* Forward declaration */
+void anx_sha256(const void *data, uint64_t len, struct anx_hash *out);
 int anx_lifecycle_transition(struct anx_state_object *obj,
 			     enum anx_object_state new_state);
 
@@ -88,8 +89,7 @@ static void objstore_remove(struct anx_state_object *obj)
 static void compute_content_hash(struct anx_state_object *obj)
 {
 	if (obj->payload && obj->payload_size > 0)
-		anx_sha256(obj->payload, (uint32_t)obj->payload_size,
-			   obj->content_hash.bytes);
+		anx_sha256(obj->payload, obj->payload_size, &obj->content_hash);
 	else
 		anx_memset(&obj->content_hash, 0, sizeof(obj->content_hash));
 }
@@ -196,16 +196,6 @@ int anx_so_create(const struct anx_so_create_params *params,
 	anx_lifecycle_transition(obj, ANX_OBJ_ACTIVE);
 	objstore_add(obj);
 
-	/* UOR projection: bind initial topological coordinate now that
-	 * (oid, version, content_hash, type, parents, schema) are fixed.
-	 * Mutations will reproject on seal. */
-	{
-		struct anx_uor_ref ref;
-
-		if (anx_uor_project_object(obj, &ref) == ANX_OK)
-			anx_uor_attach_metadata(obj, &ref);
-	}
-
 	*out = obj;
 	return ANX_OK;
 
@@ -228,32 +218,13 @@ int anx_so_open(const anx_oid_t *oid, enum anx_open_mode mode,
 		struct anx_object_handle *handle)
 {
 	struct anx_state_object *obj = anx_objstore_lookup(oid);
-	anx_cid_t nil_cell = ANX_UUID_NIL;
-	enum anx_access_op access_op;
-	int ar;
 
 	if (!obj)
 		return ANX_ENOENT;
-	if (obj->state != ANX_OBJ_ACTIVE && obj->state != ANX_OBJ_SEALED) {
-		anx_objstore_release(obj);
+	if (obj->state != ANX_OBJ_ACTIVE && obj->state != ANX_OBJ_SEALED)
 		return ANX_EINVAL;
-	}
-	if (mode != ANX_OPEN_READ && obj->state == ANX_OBJ_SEALED) {
-		anx_objstore_release(obj);
+	if (mode != ANX_OPEN_READ && obj->state == ANX_OBJ_SEALED)
 		return ANX_EPERM;
-	}
-
-	access_op = (mode == ANX_OPEN_READ)
-		? ANX_ACCESS_READ_PAYLOAD
-		: ANX_ACCESS_WRITE_PAYLOAD;
-
-	ar = anx_access_evaluate(&obj->access_policy, &nil_cell,
-				 (const anx_oid_t *)&obj->creator_cell,
-				 access_op);
-	if (ar != ANX_OK) {
-		anx_objstore_release(obj);
-		return ar;
-	}
 
 	handle->obj = obj;
 	handle->mode = mode;
@@ -280,14 +251,7 @@ int anx_so_seal(const anx_oid_t *oid)
 
 	int ret = anx_lifecycle_transition(obj, ANX_OBJ_SEALED);
 	if (ret == ANX_OK) {
-		struct anx_uor_ref ref;
-
 		anx_meta_set_bool(obj->system_meta, "sys.sealed", true);
-
-		/* Re-project on seal — content is now immutable, so this
-		 * captures the final topological coordinate. */
-		if (anx_uor_project_object(obj, &ref) == ANX_OK)
-			anx_uor_attach_metadata(obj, &ref);
 
 		struct anx_prov_event ev;
 		anx_memset(&ev, 0, sizeof(ev));

@@ -78,19 +78,6 @@ struct anx_model_desc {
 #define ANX_CAP_TOOL_EXECUTION		(1U << 9)
 #define ANX_CAP_MULTIMODAL_INPUT	(1U << 10)
 
-/* Tensor compute capabilities (RFC-0013) */
-#define ANX_CAP_TENSOR_INT8		(1U << 16)
-#define ANX_CAP_TENSOR_INT32		(1U << 17)
-#define ANX_CAP_TENSOR_FP32		(1U << 18)
-#define ANX_CAP_TENSOR_BF16		(1U << 19)
-#define ANX_CAP_TENSOR_GPU		(1U << 20)	/* discrete GPU (NVIDIA/AMD) */
-#define ANX_CAP_TENSOR_NPU		(1U << 21)	/* dedicated NPU (AMD XDNA, ANE) */
-#define ANX_CAP_TENSOR_SIMD		(1U << 22)	/* CPU SIMD (AVX-512/NEON) */
-
-/* JEPA latent-state capabilities */
-#define ANX_CAP_JEPA			(1U << 23)	/* JEPA inference (encode + predict) */
-#define ANX_CAP_JEPA_TRAIN		(1U << 24)	/* JEPA training (VICReg + EMA update) */
-
 /* Forward declaration for lease pointer */
 struct anx_engine_lease;
 
@@ -119,21 +106,6 @@ struct anx_engine {
 
 	/* Locality */
 	bool is_local;
-
-	/*
-	 * Topology affinity (RFC-0005 extension).
-	 *
-	 * Engines that specialize in a boundary-key range — for example,
-	 * a retrieval service holding a specific vindex shard, or a model
-	 * server co-located with a layer-band slice — declare the range
-	 * they serve. The planner boosts scores when a cell's topology
-	 * intent overlaps, and penalizes when the engine is specialized
-	 * elsewhere. Engines without affinity declared are treated as
-	 * generalists and are scored neutrally on this axis.
-	 */
-	bool has_topology_affinity;
-	uint64_t topology_bk_lo;
-	uint64_t topology_bk_hi;		/* inclusive */
 
 	/* Model descriptor (valid for LOCAL_MODEL / REMOTE_MODEL) */
 	struct anx_model_desc model;
@@ -184,15 +156,5 @@ int anx_engine_register_model(const char *name,
 
 /* Unregister an engine */
 int anx_engine_unregister(struct anx_engine *engine);
-
-/*
- * Declare a topology affinity range on an engine. Both endpoints
- * are inclusive. Returns ANX_EINVAL on null engine or bk_hi < bk_lo.
- */
-int anx_engine_set_topology(struct anx_engine *engine,
-			    uint64_t bk_lo, uint64_t bk_hi);
-
-/* Clear any declared topology affinity. */
-void anx_engine_clear_topology(struct anx_engine *engine);
 
 #endif /* ANX_ENGINE_H */
